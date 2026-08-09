@@ -1,0 +1,198 @@
+if getgenv().PositionToolsLoaded then
+    warn("[Position Tools] Already running.")
+    return
+end
+getgenv().PositionToolsLoaded = true
+
+local Players = game:GetService("Players")
+local TweenService = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
+local LocalPlayer = Players.LocalPlayer
+
+-- Services ready
+local function getRoot()
+    local char = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+    return char:FindFirstChild("HumanoidRootPart") or char:WaitForChild("HumanoidRootPart", 5)
+end
+
+-- Main ScreenGui
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "PositionToolsUI"
+ScreenGui.Parent = game:GetService("CoreGui")
+ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+ScreenGui.ResetOnSpawn = false
+
+-------------------------------------------------
+-- Helper: create a small window
+-------------------------------------------------
+local function createWindow(title, size, position)
+    local frame = Instance.new("Frame")
+    frame.Parent = ScreenGui
+    frame.BackgroundColor3 = Color3.fromRGB(18, 18, 20)
+    frame.BorderSizePixel = 0
+    frame.Size = size
+    frame.Position = position
+    Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 8)
+
+    local stroke = Instance.new("UIStroke", frame)
+    stroke.Color = Color3.fromRGB(55, 55, 60)
+    stroke.Thickness = 1
+
+    local titleLabel = Instance.new("TextLabel")
+    titleLabel.Parent = frame
+    titleLabel.BackgroundTransparency = 1
+    titleLabel.Position = UDim2.new(0, 10, 0, 6)
+    titleLabel.Size = UDim2.new(1, -20, 0, 18)
+    titleLabel.Font = Enum.Font.GothamBold
+    titleLabel.Text = title
+    titleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+    titleLabel.TextSize = 13
+    titleLabel.TextXAlignment = Enum.TextXAlignment.Left
+
+    -- Drag support
+    local dragging, dragStart, startPos
+    frame.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true
+            dragStart = input.Position
+            startPos = frame.Position
+            input.Changed:Connect(function()
+                if input.UserInputState == Enum.UserInputState.End then
+                    dragging = false
+                end
+            end)
+        end
+    end)
+    frame.InputChanged:Connect(function(input)
+        if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+            local delta = input.Position - dragStart
+            frame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+        end
+    end)
+
+    return frame
+end
+
+-------------------------------------------------
+-- WINDOW 1: Current Position
+-------------------------------------------------
+local Win1 = createWindow("Current Position", UDim2.new(0, 220, 0, 110), UDim2.new(0, 20, 0, 100))
+
+local PosLabel = Instance.new("TextLabel")
+PosLabel.Parent = Win1
+PosLabel.BackgroundTransparency = 1
+PosLabel.Position = UDim2.new(0, 10, 0, 28)
+PosLabel.Size = UDim2.new(1, -20, 0, 28)
+PosLabel.Font = Enum.Font.Gotham
+PosLabel.Text = "X: --  Y: --  Z: --"
+PosLabel.TextColor3 = Color3.fromRGB(220, 220, 230)
+PosLabel.TextSize = 13
+PosLabel.TextXAlignment = Enum.TextXAlignment.Left
+
+local function updatePosition()
+    local root = getRoot()
+    if root then
+        local p = root.Position
+        PosLabel.Text = string.format("X: %.1f  Y: %.1f  Z: %.1f", p.X, p.Y, p.Z)
+    else
+        PosLabel.Text = "X: --  Y: --  Z: --"
+    end
+end
+
+-- Copy Button
+local CopyBtn = Instance.new("TextButton")
+CopyBtn.Parent = Win1
+CopyBtn.BackgroundColor3 = Color3.fromRGB(40, 40, 45)
+CopyBtn.BorderSizePixel = 0
+CopyBtn.Position = UDim2.new(0, 10, 0, 65)
+CopyBtn.Size = UDim2.new(0, 95, 0, 28)
+CopyBtn.Font = Enum.Font.GothamBold
+CopyBtn.Text = "Copy"
+CopyBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+CopyBtn.TextSize = 13
+Instance.new("UICorner", CopyBtn).CornerRadius = UDim.new(0, 6)
+
+CopyBtn.MouseButton1Click:Connect(function()
+    local root = getRoot()
+    if root then
+        local p = root.Position
+        local str = string.format("%.2f, %.2f, %.2f", p.X, p.Y, p.Z)
+        if setclipboard then
+            setclipboard(str)
+            CopyBtn.Text = "Copied!"
+            task.wait(0.8)
+            CopyBtn.Text = "Copy"
+        else
+            warn("[Position Tools] setclipboard not available")
+        end
+    end
+end)
+
+-- Update Button
+local UpdateBtn = Instance.new("TextButton")
+UpdateBtn.Parent = Win1
+UpdateBtn.BackgroundColor3 = Color3.fromRGB(40, 40, 45)
+UpdateBtn.BorderSizePixel = 0
+UpdateBtn.Position = UDim2.new(0, 115, 0, 65)
+UpdateBtn.Size = UDim2.new(0, 95, 0, 28)
+UpdateBtn.Font = Enum.Font.GothamBold
+UpdateBtn.Text = "Update"
+UpdateBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+UpdateBtn.TextSize = 13
+Instance.new("UICorner", UpdateBtn).CornerRadius = UDim.new(0, 6)
+
+UpdateBtn.MouseButton1Click:Connect(updatePosition)
+
+-------------------------------------------------
+-- WINDOW 2: Teleport
+-------------------------------------------------
+local Win2 = createWindow("Teleport To", UDim2.new(0, 220, 0, 110), UDim2.new(0, 20, 0, 230))
+
+local InputBox = Instance.new("TextBox")
+InputBox.Parent = Win2
+InputBox.BackgroundColor3 = Color3.fromRGB(30, 30, 35)
+InputBox.BorderSizePixel = 0
+InputBox.Position = UDim2.new(0, 10, 0, 30)
+InputBox.Size = UDim2.new(1, -20, 0, 28)
+InputBox.Font = Enum.Font.Gotham
+InputBox.PlaceholderText = "x, y, z"
+InputBox.Text = ""
+InputBox.TextColor3 = Color3.fromRGB(255, 255, 255)
+InputBox.PlaceholderColor3 = Color3.fromRGB(120, 120, 130)
+InputBox.TextSize = 13
+InputBox.ClearTextOnFocus = false
+Instance.new("UICorner", InputBox).CornerRadius = UDim.new(0, 6)
+
+local TeleportBtn = Instance.new("TextButton")
+TeleportBtn.Parent = Win2
+TeleportBtn.BackgroundColor3 = Color3.fromRGB(50, 140, 80)
+TeleportBtn.BorderSizePixel = 0
+TeleportBtn.Position = UDim2.new(0, 10, 0, 68)
+TeleportBtn.Size = UDim2.new(1, -20, 0, 28)
+TeleportBtn.Font = Enum.Font.GothamBold
+TeleportBtn.Text = "Teleport"
+TeleportBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+TeleportBtn.TextSize = 13
+Instance.new("UICorner", TeleportBtn).CornerRadius = UDim.new(0, 6)
+
+TeleportBtn.MouseButton1Click:Connect(function()
+    local text = InputBox.Text:gsub("%s+", "") -- remove spaces
+    local x, y, z = text:match("([%-%.%d]+),([%-%.%d]+),([%-%.%d]+)")
+    
+    if x and y and z then
+        local root = getRoot()
+        if root then
+            root.CFrame = CFrame.new(tonumber(x), tonumber(y), tonumber(z))
+            TeleportBtn.Text = "Done"
+            task.wait(0.6)
+            TeleportBtn.Text = "Teleport"
+        end
+    else
+        TeleportBtn.Text = "Invalid!"
+        task.wait(0.8)
+        TeleportBtn.Text = "Teleport"
+    end
+end)
+
+-- Initial update
+updatePosition()
