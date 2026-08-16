@@ -87,6 +87,23 @@ local WORLDS = {
             { label = "Stage 12", pos = Vector3.new(1769.200, 5.471, 847.514) },
         },
     },
+    [4] = {
+        start  = Vector3.new(-5.431, 5.443, 1221.015),
+        stages = {
+            { label = "Stage 1",  pos = Vector3.new(119.386, 5.472, 1221.015) },
+            { label = "Stage 2",  pos = Vector3.new(218.386, 5.472, 1221.015) },
+            { label = "Stage 3",  pos = Vector3.new(321.386, 5.472, 1221.015) },
+            { label = "Stage 4",  pos = Vector3.new(439.386, 5.472, 1221.015) },
+            { label = "Stage 5",  pos = Vector3.new(561.386, 5.472, 1221.015) },
+            { label = "Stage 6",  pos = Vector3.new(687.386, 5.472, 1221.015) },
+            { label = "Stage 7",  pos = Vector3.new(818.845, 5.472, 1221.015) },
+            { label = "Stage 8",  pos = Vector3.new(976.233, 5.472, 1221.015) },
+            { label = "Stage 9",  pos = Vector3.new(1146.200, 5.472, 1221.015) },
+            { label = "Stage 10", pos = Vector3.new(1335.200, 5.472, 1221.015) },
+            { label = "Stage 11", pos = Vector3.new(1548.200, 5.472, 1221.015) },
+            { label = "Stage 12", pos = Vector3.new(1769.200, 5.472, 1221.015) },
+        },
+    },
 }
 
 -- Training dummies
@@ -134,6 +151,21 @@ local TRAINING = {
             Vector3.new(-61.010, 11.353, 842.726),
             Vector3.new(-61.169, 13.309, 824.281),
             Vector3.new(-61.391, 16.038, 803.192),
+        },
+    },
+    [4] = {
+        free = {
+            Vector3.new(-60.699, 7.772, 1295.663),
+            Vector3.new(-60.684, 7.772, 1284.175),
+            Vector3.new(-60.774, 8.871, 1271.431),
+        },
+        paid = {
+            Vector3.new(-60.774, 8.871, 1257.983),
+            Vector3.new(-60.774, 8.871, 1245.188),
+            Vector3.new(-60.903, 10.464, 1231.790),
+            Vector3.new(-61.010, 11.353, 1216.226),
+            Vector3.new(-61.169, 13.309, 1197.781),
+            Vector3.new(-61.391, 16.038, 1176.692),
         },
     },
 }
@@ -187,6 +219,17 @@ local PICKAXES = {
     { name = "Aetherium_Pickaxe", wins = 650000 },
     { name = "Mummy_Pickaxe",     wins = 800000 },
     { name = "RainbowMummy_Pickaxe", wins = 1000000 },
+    -- World 4
+    { name = "Yellow_LuckyBlock",    wins = 0 },
+    { name = "Gray_LuckyBlock",      wins = 1250000 },
+    { name = "White_LuckyBlock",     wins = 3350000 },
+    { name = "Black_LuckyBlock",     wins = 5000000 },
+    { name = "Blue_LuckyBlock",      wins = 7000000 },
+    { name = "Pink_LuckyBlock",      wins = 10000000 },
+    { name = "Purple_LuckyBlock",    wins = 25000000 },
+    { name = "Red_LuckyBlock",       wins = 50000000 },
+    { name = "Green_LuckyBlock",     wins = 75000000 },
+    { name = "Rainbow_LuckyBlock",   wins = 100000000 },
 }
 
 -- [[ HELPERS ]]
@@ -295,87 +338,80 @@ local function getNextTrailReal()
 end
 
 -- [[ AUTOFARM STATE ]]
-local farmRunning    = { false, false, false }
-local farmTargetStage = { 1, 1, 1 }
-local farmThreads    = { nil, nil, nil }
-local activeTweens   = { nil, nil, nil }
-local WALK_SPEED     = 200
-local STAGE_THRESHOLD = 8
+local farmRunning    = { false, false, false, false }
+local farmTargetStage = { 1, 1, 1, 1 }
+local farmThreads    = { nil, nil, nil, nil }
+
+local danceAnim = Instance.new("Animation")
+danceAnim.AnimationId = "rbxassetid://507771019"
+local activeDanceTracks = {}
 
 local function stopAllFarms()
-    for i = 1, 3 do
+    for i = 1, 4 do
         farmRunning[i] = false
-        if activeTweens[i] then activeTweens[i]:Cancel() activeTweens[i] = nil end
         if farmThreads[i] then task.cancel(farmThreads[i]) farmThreads[i] = nil end
     end
+    for _, track in pairs(activeDanceTracks) do
+        if track then track:Stop() end
+    end
+    table.clear(activeDanceTracks)
 end
 
 local function runFarm(worldIndex)
     local worldData = WORLDS[worldIndex]
-    local startPos  = worldData.start
     local allStages = worldData.stages
+    local angle = 0
+    local radius = 10
 
     while farmRunning[worldIndex] do
         local root = getRoot()
-        if not root then task.wait(1) continue end
-
-        teleport(startPos)
-        task.wait(0.4)
-
         local hum = getHumanoid()
-        if not hum then task.wait(1) continue end
+        if not root or not hum then task.wait(1) continue end
+        
+        local track = activeDanceTracks[hum]
+        if not track then
+            local animator = hum:FindFirstChildOfClass("Animator")
+            if not animator then
+                animator = Instance.new("Animator")
+                animator.Parent = hum
+            end
+            track = animator:LoadAnimation(danceAnim)
+            track.Looped = true
+            track:Play()
+            activeDanceTracks[hum] = track
+        elseif not track.IsPlaying then
+            track:Play()
+        end
 
         local targetIdx = math.clamp(farmTargetStage[worldIndex], 1, #allStages)
         local stagePos  = allStages[targetIdx].pos
         
-        local currentPos = root.Position
-        local targetWalkPos = Vector3.new(stagePos.X - STAGE_THRESHOLD, currentPos.Y, startPos.Z)
+        angle = angle + math.rad(5)
+        if angle >= math.pi * 2 then angle = angle - (math.pi * 2) end
         
-        if currentPos.X < targetWalkPos.X then
-            local distance = (targetWalkPos - currentPos).Magnitude
-            local tweenTime = distance / WALK_SPEED
-            
-            local tweenInfo = TweenInfo.new(tweenTime, Enum.EasingStyle.Linear)
-            local tween = TweenService:Create(root, tweenInfo, {CFrame = CFrame.new(targetWalkPos)})
-            
-            activeTweens[worldIndex] = tween
-            tween:Play()
-            
-            local connection
-            local finished = false
-            connection = tween.Completed:Connect(function()
-                finished = true
-                if activeTweens[worldIndex] == tween then activeTweens[worldIndex] = nil end
-                connection:Disconnect()
-            end)
-            
-            while not finished and farmRunning[worldIndex] do
-                task.wait(0.1)
-            end
-            
-            if not farmRunning[worldIndex] then
-                tween:Cancel()
-                if connection then connection:Disconnect() end
-                break
-            end
-        end
-
-        teleport(stagePos)
-        task.wait(0.5)
-        task.wait(0.2)
+        local offset = Vector3.new(math.cos(angle) * radius, 0, math.sin(angle) * radius)
+        root.CFrame = CFrame.new(stagePos + offset, stagePos)
+        
+        RunService.Heartbeat:Wait()
+    end
+    
+    local hum = getHumanoid()
+    if hum and activeDanceTracks[hum] then
+        activeDanceTracks[hum]:Stop()
+        activeDanceTracks[hum] = nil
     end
 end
 
 -- [[ UI - AUTOFARM TAB ]]
 local worldStageLabels = {}
-for i = 1, 3 do
+for i = 1, 4 do
     worldStageLabels[i] = {}
     for _, s in ipairs(WORLDS[i].stages) do
         table.insert(worldStageLabels[i], s.label)
     end
 end
 
-for i = 1, 3 do
+for i = 1, 4 do
     local wGroup = Tabs.Autofarm:AddLeftGroupbox("World " .. i .. " Autofarm", "zap")
 
     wGroup:AddDropdown("W" .. i .. "StageDropdown", {
@@ -399,11 +435,12 @@ for i = 1, 3 do
         Default = false,
         Callback = function(value)
             if value then
-                for j = 1, 3 do
+                for j = 1, 4 do
                     if j ~= i then
                         farmRunning[j] = false
-                        if activeTweens[j] then activeTweens[j]:Cancel() activeTweens[j] = nil end
                         if farmThreads[j] then task.cancel(farmThreads[j]) farmThreads[j] = nil end
+                        for _, track in pairs(activeDanceTracks) do if track then track:Stop() end end
+                        table.clear(activeDanceTracks)
                         if Toggles["AutoFarmW" .. j] then
                             Toggles["AutoFarmW" .. j]:SetValue(false)
                         end
@@ -413,24 +450,15 @@ for i = 1, 3 do
                 farmThreads[i] = task.spawn(function() runFarm(i) end)
             else
                 farmRunning[i] = false
-                if activeTweens[i] then activeTweens[i]:Cancel() activeTweens[i] = nil end
                 if farmThreads[i] then task.cancel(farmThreads[i]) farmThreads[i] = nil end
+                for _, track in pairs(activeDanceTracks) do if track then track:Stop() end end
+                table.clear(activeDanceTracks)
             end
         end,
     })
 end
 
 local speedGroup = Tabs.Autofarm:AddRightGroupbox("Settings", "settings")
-speedGroup:AddSlider("FarmWalkSpeed", {
-    Text = "Tween Speed",
-    Default = 200,
-    Min = 100,
-    Max = 600,
-    Rounding = 0,
-    Callback = function(val)
-        WALK_SPEED = val
-    end,
-})
 
 speedGroup:AddToggle("AutoRebirth", {
     Text = "Auto Rebirth",
@@ -572,8 +600,8 @@ TrailGroup:AddButton({
 })
 
 -- [[ UI - TELEPORT TAB ]]
-for i = 1, 3 do
-    local funcName = (i == 2) and "AddRightGroupbox" or "AddLeftGroupbox"
+for i = 1, 4 do
+    local funcName = (i % 2 == 0) and "AddRightGroupbox" or "AddLeftGroupbox"
     
     local TpGroup = Tabs.Teleport[funcName](Tabs.Teleport, "World " .. i, "map-pin")
     TpGroup:AddButton({
@@ -588,8 +616,8 @@ for i = 1, 3 do
 end
 
 -- [[ UI - TRAINING TAB ]]
-for i = 1, 3 do
-    local funcName = (i == 2) and "AddRightGroupbox" or "AddLeftGroupbox"
+for i = 1, #TRAINING do
+    local funcName = (i % 2 == 0) and "AddRightGroupbox" or "AddLeftGroupbox"
     
     local DGroup = Tabs.Training[funcName](Tabs.Training, "W" .. i .. " Training", "swords")
     DGroup:AddLabel("Free Dummies:")
