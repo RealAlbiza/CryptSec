@@ -1,7 +1,5 @@
--- Wait for the game to load completely
 repeat task.wait() until game:IsLoaded()
 
--- Services
 local Players = game:GetService("Players")
 local LP = Players.LocalPlayer or Players.PlayerAdded:Wait()
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -9,11 +7,9 @@ local Workspace = game:GetService("Workspace")
 local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
 
--- Game-specific remotes
 local Remotes = ReplicatedStorage:WaitForChild("Remotes")
 
--- Load Obsidian UI Library & Addons
-local repo = "https://raw.githubusercontent.com/deividcomsono/Obsidian/main/"
+local repo = "https://raw.githubusercontent.com/deividcomsono/Obsidian/refs/heads/main/"
 local Library = loadstring(game:HttpGet(repo .. "Library.lua"))()
 local ThemeManager = loadstring(game:HttpGet(repo .. "addons/ThemeManager.lua"))()
 local SaveManager = loadstring(game:HttpGet(repo .. "addons/SaveManager.lua"))()
@@ -31,7 +27,6 @@ local Window = Library:CreateWindow({
 	ShowCustomCursor = false
 })
 
--- Define Tabs
 local Tabs = {
     ["Teleports"] = Window:AddTab("Teleports", "map"),
     ["Upgrades"] = Window:AddTab("Upgrades", "star"),
@@ -40,7 +35,6 @@ local Tabs = {
     ["UI Settings"] = Window:AddTab("UI Settings", "settings"),
 }
 
--- ===================== DATABASE =====================
 local Auras = {
     {Name = "Amber",     Price = 5000},
     {Name = "Ice Cold",  Price = 150000},
@@ -53,6 +47,8 @@ local Auras = {
     {Name = "Yin Yang",  Price = 3e+18},
     {Name = "Bloodmoon", Price = 6.875e+21},
     {Name = "Sakura",    Price = 1.5e+24},
+    {Name = "Electric",    Price = 9.999999999999999E+24},
+    {Name = "Void",      Price = 7.5e+26},
 }
 
 local Trails = {
@@ -67,6 +63,8 @@ local Trails = {
     {Name = "Yin Yang",  Price = 4.5e+18},
     {Name = "Bloodmoon", Price = 2.5e+2},
     {Name = "Sakura",    Price = 6.875e+22},
+    {Name = "Flash",    Price = 2.4999999999999997E+24},
+    {Name = "Void",      Price = 5e+25},
 }
 
 local function getAuraNames()
@@ -349,6 +347,11 @@ pcall(function()
         if not autoQuantumEnabled then return end
         if typeof(message) ~= "string" then return end
 
+        local originalPos
+        if LP.Character and LP.Character:FindFirstChild("HumanoidRootPart") then
+            originalPos = LP.Character.HumanoidRootPart.Position
+        end
+
         task.wait(0.2) -- small delay so treadmill has time to spawn
 
         if message:find("World 1") then
@@ -357,6 +360,12 @@ pcall(function()
             goToQuantum(QuantumPositions.World2)
         elseif message:find("World 3") then
             goToQuantum(QuantumPositions.World3)
+        end
+
+        if originalPos then
+            task.delay(300, function()
+                TeleportToPos(originalPos)
+            end)
         end
     end)
 end)
@@ -522,6 +531,14 @@ local StagePositions = {
         ["Stage 4"] = Vector3.new(-1592.6624755859375, 22.540428161621094, 5740.951171875),
         ["Stage 5"] = Vector3.new(-1852.0552978515625, 172.54042053222656, 5740.951171875),
         ["Stage 6"] = Vector3.new(-2718.05517578125, 172.54042053222656, 5740.951171875),
+        ["Stage 7"] = Vector3.new(-3933.05517578125, 172.54042053222656, 5740.951171875),
+        ["Stage 8"] = Vector3.new(-5663.05517578125, 17.503334045410156, 5740.951171875),
+        ["Stage 9"] = Vector3.new(-7760.10693359375, 17.503334045410156, 5740.951171875),
+    },
+    [5] = { -- World 5
+        ["Stage 1"] = Vector3.new(-684.162353515625, 22.540428161621094, 7561.951171875),
+        ["Stage 2"] = Vector3.new(-1005.162353515625, 22.540428161621094, 7561.951171875),
+        ["Stage 3"] = Vector3.new(-1333.162353515625, 22.540428161621094, 7561.951171875),
     },
 }
 
@@ -544,7 +561,7 @@ local function findAndTeleport(worldNumber, stageName)
 end
 
 local WorldsBox = Tabs.Teleports:AddRightGroupbox("Worlds")
-for i = 1, 4 do
+for i = 1, 5 do
     WorldsBox:AddButton({
         Text = "Teleport World " .. i,
         Func = function()
@@ -576,10 +593,17 @@ World3Box:AddToggle("World3Enabled", { Text = "Enable World 3 TP", Default = fal
 
 local World4Box = Tabs.Teleports:AddLeftGroupbox("World 4")
 World4Box:AddDropdown("World4Stage", {
-    Values = {"Stage 1", "Stage 2", "Stage 3", "Stage 4", "Stage 5", "Stage 6"},
+    Values = {"Stage 1", "Stage 2", "Stage 3", "Stage 4", "Stage 5", "Stage 6", "Stage 7", "Stage 8", "Stage 9"},
     Default = 1, Multi = false, Text = "Stage",
 })
 World4Box:AddToggle("World4Enabled", { Text = "Enable World 4 TP", Default = false })
+
+local World5Box = Tabs.Teleports:AddLeftGroupbox("World 5")
+World5Box:AddDropdown("World5Stage", {
+    Values = {"Stage 1", "Stage 2", "Stage 3"},
+    Default = 1, Multi = false, Text = "Stage",
+})
+World5Box:AddToggle("World5Enabled", { Text = "Enable World 5 TP", Default = false })
 
 local ClickTPBox = Tabs.Teleports:AddRightGroupbox('Click TP')
 local clickTpEnabled = false
@@ -768,6 +792,10 @@ RunService.Heartbeat:Connect(function()
     if Toggles.World4Enabled and Toggles.World4Enabled.Value then
         local stage = Options.World4Stage and Options.World4Stage.Value
         if stage then findAndTeleport(4, stage) end
+    end
+    if Toggles.World5Enabled and Toggles.World5Enabled.Value then
+        local stage = Options.World5Stage and Options.World5Stage.Value
+        if stage then findAndTeleport(5, stage) end
     end
 
     -- Auto Buy Best
