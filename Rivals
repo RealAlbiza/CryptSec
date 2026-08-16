@@ -1,0 +1,2016 @@
+local Players         = game:GetService("Players")
+local RunService      = game:GetService("RunService")
+local Workspace       = game:GetService("Workspace")
+local HttpService     = game:GetService("HttpService")
+local CollectionService = game:GetService("CollectionService")
+local LocalPlayer = Players.LocalPlayer
+local Camera = Workspace.CurrentCamera
+
+-- cloneref fallback (transparent no-op on executors that lack it)
+local cloneref = (typeof(cloneref) == "function") and cloneref or function(x) return x end
+
+-- ======================== LIBRARY ========================
+local repo        = "https://raw.githubusercontent.com/deividcomsono/Obsidian/refs/heads/main/"
+local Library     = loadstring(game:HttpGet(repo .. "Library.lua"))()
+local ThemeManager = loadstring(game:HttpGet(repo .. "addons/ThemeManager.lua"))()
+local SaveManager  = loadstring(game:HttpGet(repo .. "addons/SaveManager.lua"))()
+
+local Options = Library.Options
+local Toggles = Library.Toggles
+
+Library.ForceCheckbox = false
+Library.ShowToggleFrameInKeybinds = true
+
+local Window = Library:CreateWindow({
+	Title = "CryptSec",
+	Footer = "Rivals",
+	Icon = 121626436575118,
+	NotifySide = "Right",
+	ShowCustomCursor = false
+})
+
+
+local Tabs = {
+    Combat   = Window:AddTab("Combat",   "swords"),
+    Visuals  = Window:AddTab("Visuals",  "eye"),
+    Misc     = Window:AddTab("Misc",     "sparkles"),
+    Settings = Window:AddTab("Settings", "settings"),
+}
+
+-- ======================== LAZY GAME MODULES ========================
+local repS = cloneref(game:GetService("ReplicatedStorage"))
+
+local _Utility, _EnumLibrary, _ItemLibrary
+local _FighterController, _SpectateController
+local _CosmeticLibrary, _EmoteController, _PlayerDataController
+
+local function getUtility()
+    if _Utility then return _Utility end
+    local ok, r = pcall(function() return require(repS.Modules.Utility) end)
+    if ok then _Utility = r end
+    return _Utility
+end
+local function getEnumLibrary()
+    if _EnumLibrary then return _EnumLibrary end
+    local ok, r = pcall(function() return require(repS.Modules.EnumLibrary) end)
+    if ok then _EnumLibrary = r end
+    return _EnumLibrary
+end
+local function getItemLibrary()
+    if _ItemLibrary then return _ItemLibrary end
+    local ok, r = pcall(function() return require(repS.Modules.ItemLibrary) end)
+    if ok then _ItemLibrary = r end
+    return _ItemLibrary
+end
+local function getFighterController()
+    if _FighterController then return _FighterController end
+    local ok, r = pcall(function()
+        return require(LocalPlayer.PlayerScripts.Controllers.FighterController)
+    end)
+    if ok then _FighterController = r end
+    return _FighterController
+end
+local function getSpectateController()
+    if _SpectateController then return _SpectateController end
+    local ok, r = pcall(function()
+        return require(LocalPlayer.PlayerScripts.Controllers:WaitForChild("SpectateController", 10))
+    end)
+    if ok then _SpectateController = r end
+    return _SpectateController
+end
+local function getCosmeticLibrary()
+    if _CosmeticLibrary then return _CosmeticLibrary end
+    local ok, r = pcall(function()
+        return require(repS:WaitForChild("Modules", 10):WaitForChild("CosmeticLibrary", 10))
+    end)
+    if ok then _CosmeticLibrary = r end
+    return _CosmeticLibrary
+end
+local function getEmoteController()
+    if _EmoteController then return _EmoteController end
+    local ok, r = pcall(function()
+        return require(LocalPlayer.PlayerScripts.Controllers:WaitForChild("EmoteController", 10))
+    end)
+    if ok then _EmoteController = r end
+    return _EmoteController
+end
+local function getPlayerDataController()
+    if _PlayerDataController then return _PlayerDataController end
+    local ok, r = pcall(function()
+        return require(LocalPlayer.PlayerScripts.Controllers:WaitForChild("PlayerDataController", 10))
+    end)
+    if ok then _PlayerDataController = r end
+    return _PlayerDataController
+end
+
+-- ======================== SHARED UTILITY ========================
+local function isEnemy(player)
+    if player == LocalPlayer then return false end
+    local SC   = getSpectateController()
+    local duel = SC and SC.CurrentDuelSubject
+    local localDueler = duel and duel:GetDueler(LocalPlayer)
+    local localTeam   = localDueler and localDueler:Get("TeamID") or nil
+    if localTeam and duel and duel.Duelers then
+        for _, dueler in duel.Duelers do
+            if dueler.Player == player then
+                return dueler:Get("TeamID") ~= localTeam
+            end
+        end
+    end
+    local pTeam = player:GetAttribute("TeamID")
+    local lTeam = LocalPlayer:GetAttribute("TeamID")
+    if pTeam and lTeam then return pTeam ~= lTeam end
+    return true
+end
+
+local function getClosestTarget()
+    local char = LocalPlayer.Character
+    if not char then return nil, nil, nil end
+    local myRoot = char:FindFirstChild("HumanoidRootPart")
+    if not myRoot then return nil, nil, nil end
+    local closestPlayer, closestRoot, closestHead = nil, nil, nil
+    local closestDist = 500
+    for _, player in Players:GetPlayers() do
+        if not isEnemy(player) then continue end
+        local pChar = player.Character
+        if not pChar then continue end
+        local pRoot = pChar:FindFirstChild("HumanoidRootPart")
+        local pHead = pChar:FindFirstChild("Head")
+        local pHum  = pChar:FindFirstChildWhichIsA("Humanoid")
+        if not (pRoot and pHead and pHum and pHum.Health > 0) then continue end
+        local dist = (myRoot.Position - pRoot.Position).Magnitude
+        if dist < closestDist then
+            closestDist   = dist
+            closestPlayer = player
+            closestRoot   = pRoot
+            closestHead   = pHead
+        end
+    end
+    return closestPlayer, closestRoot, closestHead
+end
+
+local function hasKnifeViewModel(targetPlayer)
+    if not targetPlayer then return false end
+    local viewModels = Workspace:FindFirstChild("ViewModels")
+    if not viewModels then return false end
+    local name = targetPlayer.Name
+    for _, model in viewModels:GetChildren() do
+        if model:IsA("Model")
+            and string.find(model.Name, name, 1, true)
+            and string.find(model.Name, "Knife", 1, true) then
+            return true
+        end
+    end
+    return false
+end
+
+-- ======================== COMBAT — Rage Bot ========================
+local RageBotBox = Tabs.Combat:AddLeftGroupbox("Rage Bot", "swords")
+
+RageBotBox:AddToggle("RageBotToggle", {
+    Text    = "Enable Rage Bot",
+    Default = false,
+    Tooltip = "Fires UseItem to the closest enemy using desync CFrame",
+})
+
+
+local RBDepBox = RageBotBox:AddDependencyBox()
+
+RBDepBox:AddSlider("RageBotFireRate", {
+    Text     = "Fire Rate (s)",
+    Default  = 0.001,
+    Min      = 0.0005,
+    Max      = 0.5,
+    Rounding = 4,
+})
+
+RBDepBox:AddDropdown("RageBotWeaponSlot", {
+    Values  = { "Primary", "Secondary", "Melee" },
+    Default = "Melee",
+    Text    = "Weapon Slot",
+})
+
+RBDepBox:SetupDependencies({ { Toggles.RageBotToggle, true } })
+
+local slotNumbers = { Primary = 1, Secondary = 2, Melee = 3 }
+local deflecting  = {}
+local lastFire    = 0
+
+Players.PlayerRemoving:Connect(function(p) deflecting[p] = nil end)
+
+local function updateDeflection()
+    local FC = getFighterController()
+    if not FC or not FC.Objects then return end
+    for _, obj in FC.Objects do
+        local player = obj.Player
+        if not player then continue end
+        if not obj.Entity or not obj.Entity:IsAlive() or obj:Get("IsSpectating") then
+            deflecting[player] = false
+            continue
+        end
+        local eq = obj.EquippedItem
+        local isDeflecting = false
+        if eq and eq.ViewModel and eq.ViewModel.Name == "Katana" then
+            isDeflecting = (eq._attack_cooldown and eq._attack_cooldown > tick()) or false
+        end
+        deflecting[player] = isDeflecting
+    end
+end
+
+Toggles.RageBotToggle:OnChanged(function()
+    if not Toggles.RageBotToggle.Value then return end
+    task.spawn(function()
+        local FC = getFighterController()
+        if not FC then return end
+        local lf = FC.LocalFighter
+        while not lf do task.wait(0.1); lf = FC.LocalFighter end
+        pcall(function() lf:EquipItem(slotNumbers[Options.RageBotWeaponSlot.Value] or 3) end)
+    end)
+end)
+
+task.spawn(function()
+    while true do
+        task.wait(1)
+        if not (Toggles.RageBotToggle and Toggles.RageBotToggle.Value) then continue end
+        local FC = getFighterController()
+        if FC and FC.LocalFighter then
+            pcall(function()
+                FC.LocalFighter:EquipItem(slotNumbers[Options.RageBotWeaponSlot.Value] or 3)
+            end)
+        end
+    end
+end)
+
+RunService.Heartbeat:Connect(function()
+    updateDeflection()
+    local FC   = getFighterController()
+    local util = getUtility()
+    local enum = getEnumLibrary()
+    if not FC or not util or not enum then return end
+
+    local targetPlayer, targetRoot, targetHead = getClosestTarget()
+    local desyncCF = nil
+
+    if targetRoot and targetHead then
+        local desyncPos
+        if hasKnifeViewModel(targetPlayer) then
+            desyncPos = (targetRoot.CFrame * CFrame.new(0, 6, 0)).Position
+        else
+            desyncPos = (targetRoot.CFrame * CFrame.new(0, 1, 2)).Position
+        end
+        desyncCF = CFrame.lookAt(desyncPos, targetHead.Position)
+    end
+
+    if desyncCF and LocalPlayer.Character then
+        local myRoot = LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+        if myRoot then
+            local oldCF  = myRoot.CFrame
+            local oldVel = myRoot.Velocity
+            local oldRV  = myRoot.RotVelocity
+            myRoot.CFrame = desyncCF
+            RunService:BindToRenderStep("__restore", 101, function()
+                if myRoot then
+                    myRoot.CFrame      = oldCF
+                    myRoot.Velocity    = oldVel
+                    myRoot.RotVelocity = oldRV
+                end
+                RunService:UnbindFromRenderStep("__restore")
+            end)
+        end
+    end
+
+    if not Toggles.RageBotToggle.Value then return end
+    if not targetPlayer or not targetHead or not targetRoot then return end
+    if deflecting[targetPlayer] then return end
+    if not LocalPlayer.Character or not LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then return end
+    if not FC.LocalFighter then return end
+
+    local item = FC.LocalFighter.EquippedItem
+    if not item then return end
+
+    local fireRate = Options.RageBotFireRate and Options.RageBotFireRate.Value or 0.001
+    if tick() - lastFire < fireRate then return end
+    lastFire = tick()
+
+    local originPos = desyncCF and desyncCF.Position or targetRoot.Position
+    local targetPos = targetHead.Position
+    local aimCF     = CFrame.lookAt(originPos, targetPos)
+    local targetCF  = targetHead.CFrame
+    local rng = Vector3.new(
+        (math.random() - 0.5) * 0.1,
+        (math.random() - 0.5) * 0.1,
+        (math.random() - 0.5) * 0.1
+    )
+    local aimedPos       = targetPos + rng
+    local objSpaceOffset = targetHead.CFrame:ToObjectSpace(CFrame.new(aimedPos))
+
+    local cameradata = {}
+    cameradata[utf8.char(1)] = {
+        [utf8.char(0)] = util:EncodeCFrame(aimCF),
+        [utf8.char(1)] = util:EncodeCFrame(targetCF),
+        [utf8.char(2)] = targetHead,
+        [utf8.char(3)] = util:EncodeCFrame(objSpaceOffset)
+    }
+
+    pcall(function()
+        repS.Remotes.Replication.Fighter.UseItem:FireServer(
+            item:Get("ObjectID"),
+            enum:ToEnum("StartShooting"),
+            cameradata,
+            nil
+        )
+    end)
+end)
+
+-- ======================== COMBAT — Rapid Fire ========================
+local RapidFireBox = Tabs.Combat:AddRightGroupbox("Rapid Fire", "zap")
+
+RapidFireBox:AddToggle("RapidFireToggle", {
+    Text    = "Enable Rapid Fire",
+    Default = false,
+    Tooltip = "Sets all weapon cooldowns to near-zero in ItemLibrary",
+})
+
+
+local rapidFireDone  = false
+local savedCooldowns = {}
+
+local function applyRapidFire()
+    if rapidFireDone then return end
+    local IL = getItemLibrary()
+    if not IL then return end
+    local ZERO = 1e-18
+    local keys = { "ShootCooldown", "BurstCooldown", "AttackCooldown", "HeavyAttackCooldown" }
+    local function scan(tbl)
+        for _, v in pairs(tbl) do
+            if type(v) == "table" then
+                for _, k in keys do
+                    if v[k] ~= nil then
+                        if not savedCooldowns[v] then savedCooldowns[v] = {} end
+                        if savedCooldowns[v][k] == nil then savedCooldowns[v][k] = v[k] end
+                        v[k] = ZERO
+                    end
+                end
+                scan(v)
+            end
+        end
+    end
+    scan(IL)
+    rapidFireDone = true
+end
+
+local function restoreRapidFire()
+    if not rapidFireDone then return end
+    for tbl, keys in pairs(savedCooldowns) do
+        for key, val in pairs(keys) do
+            pcall(function() tbl[key] = val end)
+        end
+    end
+    rapidFireDone = false
+end
+
+Toggles.RapidFireToggle:OnChanged(function()
+    if Toggles.RapidFireToggle.Value then
+        task.spawn(applyRapidFire)
+    else
+        restoreRapidFire()
+    end
+end)
+
+-- ======================== COMBAT — Silent Aim ========================
+local SilentAimBox = Tabs.Combat:AddLeftGroupbox("Silent Aim", "target")
+
+SilentAimBox:AddToggle("SilentAimToggle", {
+    Text    = "Enable Silent Aim",
+    Default = false,
+    Tooltip = "Redirects Utility.Raycast to the closest Entity tag in FOV",
+})
+
+
+local SADepBox = SilentAimBox:AddDependencyBox()
+
+SADepBox:AddDropdown("SilentAimHitPart", {
+    Values  = { "Head", "HumanoidRootPart", "Torso" },
+    Default = "Head",
+    Text    = "Hit Part",
+})
+
+SADepBox:AddSlider("SilentAimFOV", {
+    Text     = "FOV Radius",
+    Default  = 300,
+    Min      = 10,
+    Max      = 800,
+    Rounding = 0,
+})
+
+SADepBox:SetupDependencies({ { Toggles.SilentAimToggle, true } })
+
+local function getClosestEntityInFOV()
+    local center   = Camera.ViewportSize / 2
+    local hitPart  = Options.SilentAimHitPart and Options.SilentAimHitPart.Value or "Head"
+    local fovLimit = Options.SilentAimFOV and Options.SilentAimFOV.Value or 300
+    local closest, closestDist = nil, fovLimit
+    for _, entity in CollectionService:GetTagged("Entity") do
+        if entity == LocalPlayer.Character then continue end
+        local part = entity:FindFirstChild(hitPart, true)
+        if not part or not part:IsA("BasePart") then continue end
+        local sp, onScreen = Camera:WorldToViewportPoint(part.Position)
+        if not onScreen then continue end
+        local dist = (Vector2.new(sp.X, sp.Y) - center).Magnitude
+        if dist < closestDist then
+            closestDist = dist
+            closest = part
+        end
+    end
+    return closest
+end
+
+local originalRaycast = nil
+local raycastHooked   = false
+
+local function installSilentAim()
+    if raycastHooked then return end
+    local util = getUtility()
+    if not util or not util.Raycast then return end
+    originalRaycast = util.Raycast
+    util.Raycast = function(self, origin, dir, range, a, b, c)
+        if not Toggles.SilentAimToggle.Value then
+            return originalRaycast(self, origin, dir, range, a, b, c)
+        end
+        if type(range) ~= "number" or range < 100 then
+            return originalRaycast(self, origin, dir, range, a, b, c)
+        end
+        local target = getClosestEntityInFOV()
+        if not target then
+            return originalRaycast(self, origin, dir, range, a, b, c)
+        end
+        local targetPos = target.Position
+        local direction = (targetPos - origin).Unit
+        local distance  = math.min((targetPos - origin).Magnitude, range)
+        return {
+            Position = targetPos,
+            Distance = distance,
+            Instance = target,
+            Material = target.Material,
+            Normal   = -direction,
+        }
+    end
+    raycastHooked = true
+end
+
+local function uninstallSilentAim()
+    if not raycastHooked then return end
+    local util = getUtility()
+    if util and originalRaycast then util.Raycast = originalRaycast end
+    raycastHooked = false
+end
+
+Toggles.SilentAimToggle:OnChanged(function()
+    if Toggles.SilentAimToggle.Value then task.spawn(installSilentAim)
+    else uninstallSilentAim() end
+end)
+
+-- ======================== VISUALS — FOV Circle ========================
+local VisualsBox = Tabs.Visuals:AddLeftGroupbox("FOV Circle", "circle")
+
+VisualsBox:AddToggle("FOVToggle", {
+    Text    = "Show FOV Circle",
+    Default = false,
+    Tooltip = "Shows the Silent Aim FOV radius on screen",
+}):AddColorPicker("FovColor", {
+    Default = Color3.fromRGB(255, 255, 255),
+    Title   = "FOV Color",
+})
+
+local FovCircle = Drawing.new("Circle")
+FovCircle.Radius    = 300
+FovCircle.Color     = Color3.fromRGB(255, 255, 255)
+FovCircle.Filled    = false
+FovCircle.NumSides  = 128
+FovCircle.Thickness = 1
+FovCircle.Visible   = false
+
+RunService.RenderStepped:Connect(function()
+    FovCircle.Position = Camera.ViewportSize / 2
+    FovCircle.Visible  = Toggles.FOVToggle and Toggles.FOVToggle.Value or false
+    if Options.SilentAimFOV then FovCircle.Radius = Options.SilentAimFOV.Value end
+    if Options.FovColor     then FovCircle.Color  = Options.FovColor.Value end
+end)
+
+-- ======================== VISUALS — ESP ========================
+local VisualsESPBox = Tabs.Visuals:AddLeftGroupbox("ESP", "eye")
+
+VisualsESPBox:AddToggle("ESPEnabled", {
+    Text = "ESP Enabled",
+    Default = false,
+})
+
+VisualsESPBox:AddDropdown("ESPBoxType", {
+    Text = "Box ESP",
+    Values = {"2D Box", "3D Box", "Corner Box", "Disabled"},
+    Default = "2D Box",
+})
+
+VisualsESPBox:AddToggle("ESPName", {
+    Text = "Name ESP",
+    Default = false,
+})
+
+VisualsESPBox:AddLabel("Name Color"):AddColorPicker("ESPNameColor", {
+    Default = Color3.new(1, 1, 1),
+    Title = "Name Color",
+})
+
+VisualsESPBox:AddToggle("ESPHealth", {
+    Text = "Health Bar",
+    Default = false,
+})
+
+VisualsESPBox:AddToggle("ESPDistance", {
+    Text = "Distance ESP",
+    Default = false,
+})
+
+VisualsESPBox:AddToggle("ESPTracer", {
+    Text = "Tracer ESP",
+    Default = false,
+})
+
+VisualsESPBox:AddDropdown("ESPTracerOrigin", {
+    Text = "Tracer Origin",
+    Values = {"Bottom", "Top", "Center", "Mouse"},
+    Default = "Bottom",
+})
+
+VisualsESPBox:AddToggle("ESPSkeleton", {
+    Text = "Skeleton ESP",
+    Default = false,
+})
+
+-- esp was from github/enchaned by ai cuz i cant make good looking esp
+
+local DEFAULT_ESP_COLOR = Color3.new(1, 1, 1)
+
+local function getPlayerTeamColor(player)
+    if isEnemy(player) then
+        return Color3.fromRGB(255, 60, 60)
+    end
+    return Color3.fromRGB(60, 200, 255)
+end
+
+getgenv().esplib_get_color = function(character)
+    local player = Players:GetPlayerFromCharacter(character)
+    if not player then return DEFAULT_ESP_COLOR end
+    return getPlayerTeamColor(player)
+end
+
+getgenv().esplib = {
+    box = {
+        enabled = false,
+        type = "2D",
+        padding = 1.15,
+        fill = Color3.new(1, 1, 1),
+        outline = Color3.new(0, 0, 0),
+        color = Color3.new(1, 1, 1),
+    },
+    healthbar = {
+        enabled = false,
+        fill = Color3.new(0, 1, 0),
+        outline = Color3.new(0, 0, 0),
+        position = "Top",
+    },
+    name = {
+        enabled = false,
+        fill = Color3.new(1, 1, 1),
+        size = 13,
+    },
+    distance = {
+        enabled = false,
+        fill = Color3.new(1, 1, 1),
+        size = 13,
+    },
+    tracer = {
+        enabled = false,
+        fill = Color3.new(1, 1, 1),
+        outline = Color3.new(0, 0, 0),
+        from = "bottom",
+    },
+    skeleton = {
+        enabled = false,
+        color = Color3.new(1, 1, 1),
+        thickness = 2,
+        transparency = 1,
+    }
+}
+
+local esplib = getgenv().esplib
+if not esplib then
+    esplib = {
+        box = {
+            enabled = true,
+            type = "2D",
+            padding = 1.15,
+            fill = Color3.new(1,1,1),
+            outline = Color3.new(0,0,0),
+            color = Color3.new(1,1,1),
+        },
+        healthbar = {
+            enabled = true,
+            fill = Color3.new(0,1,0),
+            outline = Color3.new(0,0,0),
+            position = "Left",
+        },
+        name = {
+            enabled = true,
+            fill = Color3.new(1,1,1),
+            size = 13,
+        },
+        distance = {
+            enabled = true,
+            fill = Color3.new(1,1,1),
+            size = 13,
+        },
+        tracer = {
+            enabled = true,
+            fill = Color3.new(1,1,1),
+            outline = Color3.new(0,0,0),
+            from = "bottom",
+        },
+        skeleton = {
+            enabled = false,
+            color = Color3.new(0, 1, 1),
+            thickness = 2,
+            transparency = 1,
+        },
+        headcircle = {
+            enabled = false,
+            fill = Color3.new(1,1,1),
+            outline = Color3.new(0,0,0),
+            radius = 20,
+            thickness = 2,
+        },
+    }
+    getgenv().esplib = esplib
+end
+
+local espinstances = {}
+getgenv().esplib_instances = espinstances
+
+local espfunctions = {}
+
+local run_service = game:GetService("RunService")
+local players = game:GetService("Players")
+local user_input_service = game:GetService("UserInputService")
+local camera = workspace.CurrentCamera
+
+local abs = math.abs
+local huge = math.huge
+local min_fn = math.min
+local floor = math.floor
+local clamp = math.clamp
+
+local SKELETON_BONES_R6 = {
+    {"Head", "Torso"},
+    {"Torso", "Left Arm"},
+    {"Torso", "Right Arm"},
+    {"Torso", "Left Leg"},
+    {"Torso", "Right Leg"},
+}
+
+local SKELETON_BONES_R15 = {
+    {"Head", "UpperTorso"},
+    {"UpperTorso", "LowerTorso"},
+    {"UpperTorso", "LeftUpperArm"},
+    {"LeftUpperArm", "LeftLowerArm"},
+    {"LeftLowerArm", "LeftHand"},
+    {"UpperTorso", "RightUpperArm"},
+    {"RightUpperArm", "RightLowerArm"},
+    {"RightLowerArm", "RightHand"},
+    {"LowerTorso", "LeftUpperLeg"},
+    {"LeftUpperLeg", "LeftLowerLeg"},
+    {"LeftLowerLeg", "LeftFoot"},
+    {"LowerTorso", "RightUpperLeg"},
+    {"RightUpperLeg", "RightLowerLeg"},
+    {"RightLowerLeg", "RightFoot"},
+}
+
+local AABB_CORNER_SIGNS = {
+    {0,0,0}, {1,0,0}, {0,1,0}, {1,1,0},
+    {0,0,1}, {1,0,1}, {0,1,1}, {1,1,1},
+}
+
+local BOX_3D_EDGES = {
+    {1,2},{2,4},{4,3},{3,1},
+    {5,6},{6,8},{8,7},{7,5},
+    {1,5},{2,6},{3,7},{4,8},
+}
+
+local WorldToViewportPoint = camera.WorldToViewportPoint
+
+local boxCfg = esplib.box
+local healthCfg = esplib.healthbar
+local nameCfg = esplib.name
+local distCfg = esplib.distance
+local tracerCfg = esplib.tracer
+local skeletonCfg = esplib.skeleton
+local headCfg = esplib.headcircle
+
+local partHalfExtentCache = setmetatable({}, { __mode = "k" })
+
+local function get_part_half_extent(part)
+    local padding = boxCfg.padding
+    local cache = partHalfExtentCache[part]
+
+    if not cache or cache.padding ~= padding then
+        local size = part.Size
+        cache = {
+            hx = size.X * 0.5 * padding,
+            hy = size.Y * 0.5 * padding,
+            hz = size.Z * 0.5 * padding,
+            padding = padding,
+        }
+        partHalfExtentCache[part] = cache
+    end
+
+    return cache.hx, cache.hy, cache.hz
+end
+
+local function compute_world_aabb(parts)
+    local minX, minY, minZ = huge, huge, huge
+    local maxX, maxY, maxZ = -huge, -huge, -huge
+
+    for i = 1, #parts do
+        local part = parts[i]
+        local hx, hy, hz = get_part_half_extent(part)
+
+        local px, py, pz, r00, r01, r02, r10, r11, r12, r20, r21, r22 = part.CFrame:GetComponents()
+
+        local ehx = abs(r00) * hx + abs(r01) * hy + abs(r02) * hz
+        local ehy = abs(r10) * hx + abs(r11) * hy + abs(r12) * hz
+        local ehz = abs(r20) * hx + abs(r21) * hy + abs(r22) * hz
+
+        local x1, x2 = px - ehx, px + ehx
+        local y1, y2 = py - ehy, py + ehy
+        local z1, z2 = pz - ehz, pz + ehz
+
+        if x1 < minX then minX = x1 end
+        if y1 < minY then minY = y1 end
+        if z1 < minZ then minZ = z1 end
+        if x2 > maxX then maxX = x2 end
+        if y2 > maxY then maxY = y2 end
+        if z2 > maxZ then maxZ = z2 end
+    end
+
+    if minX == huge then
+        return nil
+    end
+
+    return minX, minY, minZ, maxX, maxY, maxZ
+end
+
+local function project_aabb_to_screen(minX, minY, minZ, maxX, maxY, maxZ)
+    local sMinX, sMinY = huge, huge
+    local sMaxX, sMaxY = -huge, -huge
+    local onscreen = false
+
+    for i = 1, 8 do
+        local s = AABB_CORNER_SIGNS[i]
+        local wx = s[1] == 0 and minX or maxX
+        local wy = s[2] == 0 and minY or maxY
+        local wz = s[3] == 0 and minZ or maxZ
+
+        local pos, visible = WorldToViewportPoint(camera, Vector3.new(wx, wy, wz))
+        if visible then
+            onscreen = true
+            local x, y = pos.X, pos.Y
+            if x < sMinX then sMinX = x end
+            if y < sMinY then sMinY = y end
+            if x > sMaxX then sMaxX = x end
+            if y > sMaxY then sMaxY = y end
+        end
+    end
+
+    if not onscreen then
+        return nil, nil, false
+    end
+
+    return Vector2.new(sMinX, sMinY), Vector2.new(sMaxX, sMaxY), true
+end
+
+local function project_aabb_corners_3d(minX, minY, minZ, maxX, maxY, maxZ)
+    local screenCorners = {}
+    local onscreen = false
+
+    for i = 1, 8 do
+        local s = AABB_CORNER_SIGNS[i]
+        local wx = s[1] == 0 and minX or maxX
+        local wy = s[2] == 0 and minY or maxY
+        local wz = s[3] == 0 and minZ or maxZ
+
+        local pos, visible = WorldToViewportPoint(camera, Vector3.new(wx, wy, wz))
+        screenCorners[i] = Vector2.new(pos.X, pos.Y)
+        if visible then onscreen = true end
+    end
+
+    return screenCorners, onscreen
+end
+
+local function get_instance_color(instance, colorGetter)
+    if colorGetter then
+        return colorGetter(instance)
+    end
+    return boxCfg.fill
+end
+
+local function ensure_character_parts(instance, data)
+    if data.partlist then
+        return data.partlist
+    end
+
+    local list = {}
+    local indexMap = setmetatable({}, { __mode = "k" })
+
+    local function addPart(p)
+        if p:IsA("BasePart") and not indexMap[p] then
+            list[#list + 1] = p
+            indexMap[p] = #list
+
+            local conn
+            conn = p:GetPropertyChangedSignal("Size"):Connect(function()
+                partHalfExtentCache[p] = nil
+            end)
+            data.sizeConns = data.sizeConns or {}
+            data.sizeConns[p] = conn
+        end
+    end
+
+    local function removePart(p)
+        local idx = indexMap[p]
+        if idx then
+            local lastIdx = #list
+            local lastPart = list[lastIdx]
+            list[idx] = lastPart
+            indexMap[lastPart] = idx
+            list[lastIdx] = nil
+            indexMap[p] = nil
+
+            if data.sizeConns and data.sizeConns[p] then
+                data.sizeConns[p]:Disconnect()
+                data.sizeConns[p] = nil
+            end
+        end
+    end
+
+    if instance:IsA("Model") then
+        for _, p in next, instance:GetDescendants() do
+            addPart(p)
+        end
+        data.partConnAdd = instance.DescendantAdded:Connect(addPart)
+        data.partConnRemove = instance.DescendantRemoving:Connect(removePart)
+    elseif instance:IsA("BasePart") then
+        addPart(instance)
+    end
+
+    data.partlist = list
+    return list
+end
+
+function espfunctions.add_box(instance)
+    if not instance or (espinstances[instance] and espinstances[instance].box) then return end
+
+    local box = {}
+
+    local outline = Drawing.new("Square")
+    outline.Thickness = 3
+    outline.Filled = false
+    outline.Transparency = 1
+    outline.Visible = false
+
+    local fill = Drawing.new("Square")
+    fill.Thickness = 1
+    fill.Filled = false
+    fill.Transparency = 1
+    fill.Visible = false
+
+    box.outline = outline
+    box.fill = fill
+    box.corner_fill = {}
+    box.corner_outline = {}
+
+    for i = 1, 8 do
+        local o = Drawing.new("Line")
+        o.Thickness = 3
+        o.Transparency = 1
+        o.Visible = false
+
+        local f = Drawing.new("Line")
+        f.Thickness = 1
+        f.Transparency = 1
+        f.Visible = false
+
+        box.corner_fill[i] = f
+        box.corner_outline[i] = o
+    end
+
+    box.box_3d_lines = {}
+    for i = 1, 12 do
+        local line = Drawing.new("Line")
+        line.Thickness = 2
+        line.Transparency = 1
+        line.Visible = false
+        box.box_3d_lines[i] = line
+    end
+
+    espinstances[instance] = espinstances[instance] or {}
+    espinstances[instance].box = box
+end
+
+function espfunctions.add_healthbar(instance)
+    if not instance or (espinstances[instance] and espinstances[instance].healthbar) then return end
+
+    local outline = Drawing.new("Square")
+    outline.Thickness = 1
+    outline.Filled = true
+    outline.Transparency = 1
+
+    local fill = Drawing.new("Square")
+    fill.Filled = true
+    fill.Transparency = 1
+
+    espinstances[instance] = espinstances[instance] or {}
+    espinstances[instance].healthbar = {
+        outline = outline,
+        fill = fill,
+    }
+end
+
+function espfunctions.add_name(instance)
+    if not instance or (espinstances[instance] and espinstances[instance].name) then return end
+
+    local text = Drawing.new("Text")
+    text.Center = true
+    text.Outline = true
+    text.Font = 1
+    text.Transparency = 1
+
+    espinstances[instance] = espinstances[instance] or {}
+    espinstances[instance].name = text
+end
+
+function espfunctions.add_distance(instance)
+    if not instance or (espinstances[instance] and espinstances[instance].distance) then return end
+
+    local text = Drawing.new("Text")
+    text.Center = true
+    text.Outline = true
+    text.Font = 1
+    text.Transparency = 1
+
+    espinstances[instance] = espinstances[instance] or {}
+    espinstances[instance].distance = text
+end
+
+function espfunctions.add_tracer(instance)
+    if not instance or (espinstances[instance] and espinstances[instance].tracer) then return end
+
+    local outline = Drawing.new("Line")
+    outline.Thickness = 3
+    outline.Transparency = 1
+
+    local fill = Drawing.new("Line")
+    fill.Thickness = 1
+    fill.Transparency = 1
+
+    espinstances[instance] = espinstances[instance] or {}
+    espinstances[instance].tracer = {
+        outline = outline,
+        fill = fill,
+    }
+end
+
+function espfunctions.add_skeleton(instance, options)
+    if not instance or (espinstances[instance] and espinstances[instance].skeleton) then return end
+
+    options = options or {}
+    local thickness = options.thickness or skeletonCfg.thickness
+
+    local isR15 = instance:FindFirstChild("UpperTorso") ~= nil
+    local boneNames = isR15 and SKELETON_BONES_R15 or SKELETON_BONES_R6
+
+    local lines = {}
+    local bone_parts = {}
+
+    for i = 1, #boneNames do
+        local line = Drawing.new("Line")
+        line.Thickness = thickness
+        line.Transparency = 1
+        line.Visible = false
+        lines[i] = line
+
+        local partA = instance:FindFirstChild(boneNames[i][1])
+        local partB = instance:FindFirstChild(boneNames[i][2])
+        bone_parts[i] = { partA, partB }
+    end
+
+    espinstances[instance] = espinstances[instance] or {}
+    espinstances[instance].skeleton = {
+        lines = lines,
+        bone_parts = bone_parts,
+        screenCache = {},
+    }
+end
+
+function espfunctions.add_headcircle(instance)
+    if not instance or (espinstances[instance] and espinstances[instance].headcircle) then return end
+
+    local circle = Drawing.new("Circle")
+    circle.Thickness = (headCfg and headCfg.thickness) or 2
+    circle.Filled = false
+    circle.Transparency = 1
+    circle.Visible = false
+    circle.NumSides = 32
+
+    espinstances[instance] = espinstances[instance] or {}
+    espinstances[instance].headcircle = circle
+end
+
+local function hide_all(data)
+    if data.box then
+        data.box.outline.Visible = false
+        data.box.fill.Visible = false
+        local cf, co, l3 = data.box.corner_fill, data.box.corner_outline, data.box.box_3d_lines
+        for i = 1, #cf do cf[i].Visible = false end
+        for i = 1, #co do co[i].Visible = false end
+        for i = 1, #l3 do l3[i].Visible = false end
+    end
+    if data.healthbar then
+        data.healthbar.outline.Visible = false
+        data.healthbar.fill.Visible = false
+    end
+    if data.name then data.name.Visible = false end
+    if data.distance then data.distance.Visible = false end
+    if data.tracer then
+        data.tracer.outline.Visible = false
+        data.tracer.fill.Visible = false
+    end
+    if data.skeleton then
+        local lines = data.skeleton.lines
+        for i = 1, #lines do lines[i].Visible = false end
+    end
+    if data.headcircle then data.headcircle.Visible = false end
+end
+
+local function cleanup_instance(instance, data)
+    if data.box then
+        data.box.outline:Remove()
+        data.box.fill:Remove()
+        for _, line in next, (data.box.corner_fill) do line:Remove() end
+        for _, line in next, (data.box.corner_outline) do line:Remove() end
+        for _, line in next, (data.box.box_3d_lines) do line:Remove() end
+    end
+    if data.healthbar then
+        data.healthbar.outline:Remove()
+        data.healthbar.fill:Remove()
+    end
+    if data.name then data.name:Remove() end
+    if data.distance then data.distance:Remove() end
+    if data.tracer then
+        data.tracer.outline:Remove()
+        data.tracer.fill:Remove()
+    end
+    if data.skeleton then
+        for _, line in next, (data.skeleton.lines) do line:Remove() end
+    end
+    if data.headcircle then data.headcircle:Remove() end
+
+    if data.partConnAdd then data.partConnAdd:Disconnect() end
+    if data.partConnRemove then data.partConnRemove:Disconnect() end
+    if data.sizeConns then
+        for _, conn in next, (data.sizeConns) do
+            conn:Disconnect()
+        end
+    end
+end
+
+local function get_cached_screen_pos(cache, part)
+    local cached = cache[part]
+    if cached then
+        return cached[1], cached[2]
+    end
+    local pos, vis = WorldToViewportPoint(camera, part.Position)
+    local sp = Vector2.new(pos.X, pos.Y)
+    cache[part] = { sp, vis }
+    return sp, vis
+end
+
+run_service.RenderStepped:Connect(function()
+    local camPos = camera.CFrame.Position
+    local colorGetter = getgenv().esplib_get_color 
+    local vp = camera.ViewportSize
+
+    local boxEnabled = boxCfg.enabled
+    local boxType = boxCfg.type
+    local healthEnabled = healthCfg.enabled
+    local nameEnabled = nameCfg.enabled
+    local distEnabled = distCfg.enabled
+    local tracerEnabled = tracerCfg.enabled
+    local skeletonEnabled = skeletonCfg.enabled
+    local headEnabled = headCfg and headCfg.enabled
+    local tracerFrom = tracerCfg.from
+
+    for instance, data in next, espinstances do
+        if not instance or not instance.Parent then
+            cleanup_instance(instance, data)
+            espinstances[instance] = nil
+            continue
+        end
+
+        if instance:IsA("Model") and not instance.PrimaryPart then
+            hide_all(data)
+            continue
+        end
+
+        if not data.humanoid or not data.humanoid.Parent then
+            data.humanoid = instance:FindFirstChildOfClass("Humanoid")
+        end
+        local humanoid = data.humanoid
+
+        if humanoid and humanoid.Health <= 0 then
+            hide_all(data)
+            continue
+        end
+
+        local needBox = boxEnabled and data.box ~= nil
+        local needHealthbar = healthEnabled and data.healthbar ~= nil
+        local needName = nameEnabled and data.name ~= nil
+        local needDistance = distEnabled and data.distance ~= nil
+        local needTracer = tracerEnabled and data.tracer ~= nil
+        local needSkeleton = skeletonEnabled and data.skeleton ~= nil
+        local needHeadcircle = headEnabled and data.headcircle ~= nil
+
+        if data.box and not needBox then
+            data.box.outline.Visible = false
+            data.box.fill.Visible = false
+            local cf, co, l3 = data.box.corner_fill, data.box.corner_outline, data.box.box_3d_lines
+            for i = 1, 8 do cf[i].Visible = false; co[i].Visible = false end
+            for i = 1, 12 do l3[i].Visible = false end
+        end
+        if data.healthbar and not needHealthbar then
+            data.healthbar.outline.Visible = false
+            data.healthbar.fill.Visible = false
+        end
+        if data.name and not needName then
+            data.name.Visible = false
+        end
+        if data.distance and not needDistance then
+            data.distance.Visible = false
+        end
+        if data.tracer and not needTracer then
+            data.tracer.outline.Visible = false
+            data.tracer.fill.Visible = false
+        end
+        if data.skeleton and not needSkeleton then
+            local lines = data.skeleton.lines
+            for i = 1, #lines do lines[i].Visible = false end
+        end
+        if data.headcircle and not needHeadcircle then
+            data.headcircle.Visible = false
+        end
+
+        if not (needBox or needHealthbar or needName or needDistance or needTracer or needSkeleton or needHeadcircle) then
+            continue
+        end
+
+        local teamColor = get_instance_color(instance, colorGetter)
+        local parts = ensure_character_parts(instance, data)
+
+        local min, max, onscreen = nil, nil, false
+        local corners_3d, onscreen_3d = nil, false
+
+        if needBox or needHealthbar or needName or needDistance or needTracer then
+            local aMinX, aMinY, aMinZ, aMaxX, aMaxY, aMaxZ = compute_world_aabb(parts)
+            if aMinX then
+                min, max, onscreen = project_aabb_to_screen(aMinX, aMinY, aMinZ, aMaxX, aMaxY, aMaxZ)
+                if needBox and boxType == "3D" then
+                    corners_3d, onscreen_3d = project_aabb_corners_3d(aMinX, aMinY, aMinZ, aMaxX, aMaxY, aMaxZ)
+                end
+            end
+        end
+
+        if data.box then
+            local box = data.box
+
+            if needBox and onscreen then
+                local x, y = min.X, min.Y
+                local w, h = (max - min).X, (max - min).Y
+                local len = min_fn(w, h) * 0.25
+
+                if boxType == "2D" then
+                    box.outline.Position = min
+                    box.outline.Size = max - min
+                    box.outline.Color = boxCfg.outline
+                    box.outline.Visible = true
+
+                    box.fill.Position = min
+                    box.fill.Size = max - min
+                    box.fill.Color = teamColor
+                    box.fill.Visible = true
+
+                    local cf, co, l3 = box.corner_fill, box.corner_outline, box.box_3d_lines
+                    for i = 1, 8 do cf[i].Visible = false; co[i].Visible = false end
+                    for i = 1, 12 do l3[i].Visible = false end
+
+                elseif boxType == "Corner" then
+                    local corners = {
+                        {Vector2.new(x, y),             Vector2.new(x + len, y)},
+                        {Vector2.new(x, y),             Vector2.new(x, y + len)},
+                        {Vector2.new(x + w - len, y),   Vector2.new(x + w, y)},
+                        {Vector2.new(x + w, y),         Vector2.new(x + w, y + len)},
+                        {Vector2.new(x, y + h),         Vector2.new(x + len, y + h)},
+                        {Vector2.new(x, y + h - len),   Vector2.new(x, y + h)},
+                        {Vector2.new(x + w - len, y + h), Vector2.new(x + w, y + h)},
+                        {Vector2.new(x + w, y + h - len), Vector2.new(x + w, y + h)},
+                    }
+
+                    for i = 1, 8 do
+                        local from, to = corners[i][1], corners[i][2]
+                        local dir = (to - from).Unit
+                        box.corner_outline[i].From = from - dir
+                        box.corner_outline[i].To = to + dir
+                        box.corner_outline[i].Color = boxCfg.outline
+                        box.corner_outline[i].Visible = true
+
+                        box.corner_fill[i].From = from
+                        box.corner_fill[i].To = to
+                        box.corner_fill[i].Color = teamColor
+                        box.corner_fill[i].Visible = true
+                    end
+
+                    box.outline.Visible = false
+                    box.fill.Visible = false
+                    for i = 1, 12 do box.box_3d_lines[i].Visible = false end
+
+                elseif boxType == "3D" then
+                    if corners_3d and #corners_3d == 8 then
+                        for i = 1, 12 do
+                            local edge = BOX_3D_EDGES[i]
+                            box.box_3d_lines[i].From = corners_3d[edge[1]]
+                            box.box_3d_lines[i].To = corners_3d[edge[2]]
+                            box.box_3d_lines[i].Color = teamColor
+                            box.box_3d_lines[i].Visible = onscreen_3d
+                        end
+                    else
+                        for i = 1, 12 do box.box_3d_lines[i].Visible = false end
+                    end
+
+                    box.outline.Visible = false
+                    box.fill.Visible = false
+                    for i = 1, 8 do
+                        box.corner_fill[i].Visible = false
+                        box.corner_outline[i].Visible = false
+                    end
+                end
+            else
+                box.outline.Visible = false
+                box.fill.Visible = false
+                for i = 1, 8 do
+                    box.corner_fill[i].Visible = false
+                    box.corner_outline[i].Visible = false
+                end
+                for i = 1, 12 do box.box_3d_lines[i].Visible = false end
+            end
+        end
+
+        if data.healthbar then
+            local outline, fill = data.healthbar.outline, data.healthbar.fill
+
+            if not needHealthbar or not onscreen then
+                outline.Visible = false
+                fill.Visible = false
+            else
+                if humanoid then
+                    local height = max.Y - min.Y
+                    local padding = 1
+                    local x = min.X - 3 - 1 - padding
+                    local y = min.Y - padding
+                    local health = clamp(humanoid.Health / humanoid.MaxHealth, 0, 1)
+                    local fillheight = height * health
+
+                    outline.Color = healthCfg.outline
+                    outline.Position = Vector2.new(x, y)
+                    outline.Size = Vector2.new(1 + 2 * padding, height + 2 * padding)
+                    outline.Visible = true
+
+                    fill.Color = healthCfg.fill
+                    fill.Position = Vector2.new(x + padding, y + (height + padding) - fillheight)
+                    fill.Size = Vector2.new(1, fillheight)
+                    fill.Visible = true
+                else
+                    outline.Visible = false
+                    fill.Visible = false
+                end
+            end
+        end
+
+        if data.name then
+            if needName and onscreen then
+                local text = data.name
+                local center_x = (min.X + max.X) / 2
+                local y = min.Y - 15
+
+                local name_str = instance.Name
+                if humanoid then
+                    if not data.player then
+                        data.player = players:GetPlayerFromCharacter(instance)
+                    end
+                    if data.player then name_str = data.player.Name end
+                end
+
+                text.Text = name_str
+                text.Size = nameCfg.size
+                text.Color = nameCfg.fill
+                text.Position = Vector2.new(center_x, y)
+                text.Visible = true
+            else
+                data.name.Visible = false
+            end
+        end
+
+        if data.distance then
+            if needDistance and onscreen then
+                local text = data.distance
+                local center_x = (min.X + max.X) / 2
+                local y = max.Y + 5
+                local dist = 999
+
+                if instance:IsA("Model") and instance.PrimaryPart then
+                    dist = (camPos - instance.PrimaryPart.Position).Magnitude
+                elseif instance:IsA("BasePart") then
+                    dist = (camPos - instance.Position).Magnitude
+                end
+
+                text.Text = tostring(floor(dist)) .. "m"
+                text.Size = distCfg.size
+                text.Color = distCfg.fill
+                text.Position = Vector2.new(center_x, y)
+                text.Visible = true
+            else
+                data.distance.Visible = false
+            end
+        end
+
+        if data.tracer then
+            if needTracer and onscreen then
+                local outline, fill = data.tracer.outline, data.tracer.fill
+                local from_pos
+
+                if tracerFrom == "mouse" then
+                    local ml = user_input_service:GetMouseLocation()
+                    from_pos = Vector2.new(ml.X, ml.Y)
+                elseif tracerFrom == "top" then
+                    from_pos = Vector2.new(vp.X / 2, 0)
+                elseif tracerFrom == "center" then
+                    from_pos = Vector2.new(vp.X / 2, vp.Y / 2)
+                else
+                    from_pos = Vector2.new(vp.X / 2, vp.Y)
+                end
+
+                local to_pos = (min + max) / 2
+
+                outline.From = from_pos
+                outline.To = to_pos
+                outline.Color = tracerCfg.outline
+                outline.Visible = true
+
+                fill.From = from_pos
+                fill.To = to_pos
+                fill.Color = teamColor
+                fill.Visible = true
+            else
+                data.tracer.outline.Visible = false
+                data.tracer.fill.Visible = false
+            end
+        end
+
+        if data.skeleton then
+            if needSkeleton and onscreen then
+                local bone_parts = data.skeleton.bone_parts
+                local lines = data.skeleton.lines
+                local screenCache = data.skeleton.screenCache
+                for k in next, screenCache do screenCache[k] = nil end
+
+                for i = 1, #bone_parts do
+                    local pair = bone_parts[i]
+                    local partA, partB = pair[1], pair[2]
+                    local line = lines[i]
+
+                    if partA and partB and partA.Parent and partB.Parent then
+                        local posA, visA = get_cached_screen_pos(screenCache, partA)
+                        local posB, visB = get_cached_screen_pos(screenCache, partB)
+
+                        if visA and visB then
+                            line.From = posA
+                            line.To = posB
+                            line.Color = teamColor
+                            line.Thickness = skeletonCfg.thickness
+                            line.Visible = true
+                        else
+                            line.Visible = false
+                        end
+                    else
+                        line.Visible = false
+                    end
+                end
+            else
+                local lines = data.skeleton.lines
+                for i = 1, #lines do lines[i].Visible = false end
+            end
+        end
+
+        if data.headcircle then
+            if needHeadcircle and onscreen then
+                local circle = data.headcircle
+                if not data.head or not data.head.Parent then
+                    data.head = instance:FindFirstChild("Head")
+                end
+                local head = data.head
+
+                if head then
+                    local head_pos, visible = WorldToViewportPoint(camera, head.Position)
+                    if visible then
+                        circle.Position = Vector2.new(head_pos.X, head_pos.Y)
+                        circle.Radius = headCfg.radius or 20
+                        circle.Color = headCfg.fill
+                        circle.Thickness = headCfg.thickness or 2
+                        circle.Visible = true
+                    else
+                        circle.Visible = false
+                    end
+                else
+                    circle.Visible = false
+                end
+            else
+                data.headcircle.Visible = false
+            end
+        end
+    end
+end)
+
+for k, v in next, espfunctions do
+    esplib[k] = v
+end
+
+local espCharacters = {}
+
+local function updateESPSettings()
+    local boxType = Options.ESPBoxType.Value
+    if boxType == "Disabled" then
+        esplib.box.enabled = false
+    else
+        esplib.box.enabled = Toggles.ESPEnabled.Value
+        esplib.box.type = boxType:gsub(" Box", "")
+    end
+
+    esplib.name.enabled = Toggles.ESPEnabled.Value and Toggles.ESPName.Value
+    esplib.name.fill = Options.ESPNameColor.Value
+
+    esplib.healthbar.enabled = Toggles.ESPEnabled.Value and Toggles.ESPHealth.Value
+
+    esplib.distance.enabled = Toggles.ESPEnabled.Value and Toggles.ESPDistance.Value
+
+    esplib.tracer.enabled = Toggles.ESPEnabled.Value and Toggles.ESPTracer.Value
+    esplib.tracer.from = Options.ESPTracerOrigin.Value:lower()
+
+    esplib.skeleton.enabled = Toggles.ESPEnabled.Value and Toggles.ESPSkeleton.Value
+end
+
+local function addEspToCharacter(character, player)
+    if not character then return end
+    if espCharacters[character] then return end
+
+    esplib.add_box(character)
+    esplib.add_name(character)
+    esplib.add_healthbar(character)
+    esplib.add_distance(character)
+    esplib.add_tracer(character)
+    esplib.add_skeleton(character, {
+        thickness = 2,
+        transparency = 1,
+    })
+
+    espCharacters[character] = { player = player }
+end
+
+local function removeEspFromCharacter(character)
+    if not character then return end
+    espCharacters[character] = nil
+end
+
+local espActive = true
+
+local function setupPlayerEsp(player)
+    if player == Players.LocalPlayer then return end
+
+    if player.Character and espActive then
+        addEspToCharacter(player.Character, player)
+    end
+
+    player.CharacterAdded:Connect(function(character)
+        task.wait(0.1)
+        if espActive then
+            addEspToCharacter(character, player)
+        end
+    end)
+
+    player.CharacterRemoving:Connect(function(character)
+        removeEspFromCharacter(character)
+    end)
+end
+
+local function refreshAllCharacters()
+    for character, _ in next, espCharacters do
+        removeEspFromCharacter(character)
+    end
+    for _, player in next, Players:GetPlayers() do
+        if player ~= Players.LocalPlayer and player.Character then
+            addEspToCharacter(player.Character, player)
+        end
+    end
+end
+
+Toggles.ESPEnabled:OnChanged(function()
+    updateESPSettings()
+    refreshAllCharacters()
+end)
+
+Options.ESPBoxType:OnChanged(function()
+    updateESPSettings()
+end)
+
+Toggles.ESPName:OnChanged(function()
+    updateESPSettings()
+end)
+
+Options.ESPNameColor:OnChanged(function()
+    updateESPSettings()
+end)
+
+Toggles.ESPHealth:OnChanged(function()
+    updateESPSettings()
+end)
+
+Toggles.ESPDistance:OnChanged(function()
+    updateESPSettings()
+end)
+
+Toggles.ESPTracer:OnChanged(function()
+    updateESPSettings()
+end)
+
+Options.ESPTracerOrigin:OnChanged(function()
+    updateESPSettings()
+end)
+
+Toggles.ESPSkeleton:OnChanged(function()
+    updateESPSettings()
+end)
+
+for _, player in next, Players:GetPlayers() do
+    setupPlayerEsp(player)
+end
+
+Players.PlayerAdded:Connect(function(player)
+    setupPlayerEsp(player)
+end)
+
+updateESPSettings()
+
+local function clearAllEsp()
+    for character, _ in next, espCharacters do
+        removeEspFromCharacter(character)
+    end
+end
+
+local function restoreAllEsp()
+    for _, player in next, Players:GetPlayers() do
+        if player ~= Players.LocalPlayer and player.Character then
+            addEspToCharacter(player.Character, player)
+        end
+    end
+end
+
+LocalPlayer.CharacterRemoving:Connect(function()
+    espActive = false
+    clearAllEsp()
+end)
+
+LocalPlayer.CharacterAdded:Connect(function()
+    task.wait(0.5)
+    espActive = true
+    restoreAllEsp()
+end)
+
+if LocalPlayer.Character then
+    local hum = LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+    if hum then
+        hum.Died:Connect(function()
+            espActive = false
+            clearAllEsp()
+        end)
+    end
+end
+
+LocalPlayer.CharacterAdded:Connect(function(char)
+    local hum = char:WaitForChild("Humanoid", 5)
+    if hum then
+        hum.Died:Connect(function()
+            espActive = false
+            clearAllEsp()
+        end)
+    end
+end)
+
+
+-- ======================== MISC — Unlock Emotes ========================
+local EmotesBox = Tabs.Misc:AddLeftGroupbox("Unlock Emotes", "sparkles")
+
+EmotesBox:AddToggle("UnlockEmotesToggle", {
+    Text    = "Enable Unlock Emotes",
+    Default = false,
+    Tooltip = "Allows playing any emote regardless of ownership",
+})
+
+
+local emotesHooked      = false
+local isLocalEmoting    = false
+local localEmoteObject  = nil
+local currentLocalEmote = nil
+local runningConn       = nil
+local prevCamMode, prevMinZoom = nil, nil
+local hookedEntity, oldIsEmoting, oldGetCurrentEmote = nil, nil, nil
+
+local function safeFire(signal)
+    if not signal then return end
+    if type(signal) == "table" then
+        if type(signal.Fire) == "function" then pcall(signal.Fire, signal)
+        elseif type(signal.fire) == "function" then pcall(signal.fire, signal) end
+    elseif typeof(signal) == "Instance" and signal:IsA("BindableEvent") then
+        pcall(function() signal:Fire() end)
+    end
+end
+
+local function unhookEmoteEntity()
+    if hookedEntity and oldIsEmoting then
+        pcall(function() hookedEntity.IsEmoting = oldIsEmoting end)
+    end
+    if hookedEntity and oldGetCurrentEmote then
+        pcall(function() hookedEntity.GetCurrentEmote = oldGetCurrentEmote end)
+    end
+    hookedEntity, oldIsEmoting, oldGetCurrentEmote = nil, nil, nil
+end
+
+local function stopLocalEmote()
+    if not isLocalEmoting then return end
+    isLocalEmoting = false
+    localEmoteObject = nil
+    pcall(function()
+        if prevCamMode ~= nil then LocalPlayer.CameraMode = prevCamMode; prevCamMode = nil end
+        if prevMinZoom ~= nil then LocalPlayer.CameraMinZoomDistance = prevMinZoom; prevMinZoom = nil end
+    end)
+    local FC = getFighterController()
+    local fighter = FC and FC:GetFighter(LocalPlayer)
+    local entity  = fighter and fighter.Entity
+    if entity and entity.EmoteStatusChanged then safeFire(entity.EmoteStatusChanged) end
+    if currentLocalEmote then
+        pcall(function() currentLocalEmote:Destroy() end)
+        currentLocalEmote = nil
+    end
+end
+
+local function hookEmoteEntity(entity)
+    if not entity or hookedEntity == entity then return end
+    unhookEmoteEntity()
+    hookedEntity       = entity
+    oldIsEmoting       = entity.IsEmoting
+    oldGetCurrentEmote = entity.GetCurrentEmote
+    entity.IsEmoting = function(self, ...)
+        if isLocalEmoting then return true end
+        return oldIsEmoting(self, ...)
+    end
+    entity.GetCurrentEmote = function(self, ...)
+        if isLocalEmoting and localEmoteObject then return localEmoteObject end
+        return oldGetCurrentEmote(self, ...)
+    end
+end
+
+local function setupHumanoidMonitor(char)
+    if not char then return end
+    local hum = char:WaitForChild("Humanoid", 10)
+    if not hum then return end
+    if runningConn then runningConn:Disconnect(); runningConn = nil end
+    runningConn = hum.Running:Connect(function(speed)
+        if speed > 0.1 and isLocalEmoting then stopLocalEmote() end
+    end)
+end
+
+LocalPlayer.CharacterAdded:Connect(function(char)
+    stopLocalEmote()
+    setupHumanoidMonitor(char)
+end)
+setupHumanoidMonitor(LocalPlayer.Character)
+
+Toggles.UnlockEmotesToggle:OnChanged(function()
+    if not Toggles.UnlockEmotesToggle.Value then return end
+    if emotesHooked then return end
+    task.spawn(function()
+        local CL  = getCosmeticLibrary()
+        local EC  = getEmoteController()
+        local PDC = getPlayerDataController()
+        local FC  = getFighterController()
+        if not CL or not EC then return end
+        local Modules = repS:FindFirstChild("Modules")
+
+        local oldOwnsCosmetic = CL.OwnsCosmetic
+        CL.OwnsCosmetic = function(self, inventory, name)
+            local cosmetic = CL.Cosmetics[name]
+            if cosmetic and cosmetic.Type == "Emote" then return true end
+            return oldOwnsCosmetic(self, inventory, name)
+        end
+
+        local _origCanEmote = EC.CanEmote
+        EC.CanEmote = function(self, p2)
+            local ok, res = pcall(_origCanEmote, self, p2)
+            if ok and res then return true end
+            if FC then
+                local f = FC:GetFighter(LocalPlayer)
+                if f and f.IsLocalPlayer and f:IsAlive() then
+                    local e = f.Entity
+                    if e and not e:Get("IsFrozen") then return true end
+                end
+            end
+            return false
+        end
+
+        local oldUseEmoteByName = EC.UseEmoteByName
+        EC.UseEmoteByName = function(self, emoteName)
+            stopLocalEmote()
+            local ownsIt = PDC and oldOwnsCosmetic(CL, PDC:Get("CosmeticInventory"), emoteName) or false
+            pcall(function() oldUseEmoteByName(self, emoteName) end)
+            if not ownsIt then
+                task.spawn(function()
+                    local folder = Modules and Modules:FindFirstChild("Emotes")
+                    local mod    = folder and folder:FindFirstChild(emoteName)
+                    local char   = LocalPlayer.Character
+                    local hum    = char and char:FindFirstChildOfClass("Humanoid")
+                    if mod and hum then
+                        task.wait(0.1)
+                        pcall(function()
+                            currentLocalEmote = require(mod).new(hum)
+                            prevCamMode  = LocalPlayer.CameraMode
+                            prevMinZoom  = LocalPlayer.CameraMinZoomDistance
+                            LocalPlayer.CameraMode = Enum.CameraMode.Classic
+                            LocalPlayer.CameraMinZoomDistance = 8
+                            isLocalEmoting   = true
+                            localEmoteObject = currentLocalEmote
+                            local entity
+                            if FC then
+                                local f = FC:GetFighter(LocalPlayer)
+                                entity = f and f.IsLocalPlayer and f.Entity
+                            end
+                            if entity then
+                                hookEmoteEntity(entity)
+                                if entity.EmoteStatusChanged then safeFire(entity.EmoteStatusChanged) end
+                            end
+                            task.defer(currentLocalEmote.Simulate, currentLocalEmote)
+                            currentLocalEmote.Destroying:Wait()
+                            if isLocalEmoting then stopLocalEmote() end
+                            unhookEmoteEntity()
+                        end)
+                    end
+                end)
+            end
+        end
+        emotesHooked = true
+    end)
+end)
+
+-- ======================== MISC — Auto Loadout ========================
+local AutoLoadoutBox = Tabs.Misc:AddLeftGroupbox("Auto Loadout", "package")
+
+AutoLoadoutBox:AddToggle("AutoLoadoutToggle", {
+    Text    = "Enable Auto Loadout",
+    Default = false,
+    Tooltip = "Auto-selects weapons when the pick screen appears",
+})
+
+local ALDep = AutoLoadoutBox:AddDependencyBox()
+
+local weaponList = {
+    "Bow", "Handgun", "Fists", "Grenade", "Sword",
+    "Rifle", "SMG", "Shotgun", "Sniper", "Katana", "None"
+}
+
+ALDep:AddDropdown("Loadout_1", { Values = weaponList, Default = "Bow",     Text = "Slot 1" })
+ALDep:AddDropdown("Loadout_2", { Values = weaponList, Default = "Handgun", Text = "Slot 2" })
+ALDep:AddDropdown("Loadout_3", { Values = weaponList, Default = "Fists",   Text = "Slot 3" })
+ALDep:AddDropdown("Loadout_4", { Values = weaponList, Default = "Grenade", Text = "Slot 4" })
+
+ALDep:SetupDependencies({ { Toggles.AutoLoadoutToggle, true } })
+
+local weaponPickRemote, prePickRemote = nil, nil
+
+local function fetchLoadoutRemotes()
+    if weaponPickRemote then return true end
+    local ok = pcall(function()
+        weaponPickRemote = repS.Remotes.Replication.Fighter.PickWeapons
+        prePickRemote    = repS.Remotes.Duels.PickWeaponsAheadOfTime
+    end)
+    return ok and weaponPickRemote ~= nil
+end
+
+task.spawn(function()
+    while task.wait(0.1) do
+        if not (Toggles.AutoLoadoutToggle and Toggles.AutoLoadoutToggle.Value) then continue end
+        if not fetchLoadoutRemotes() then continue end
+        local pg    = LocalPlayer:FindFirstChildOfClass("PlayerGui")
+        local selUI = pg and pg:FindFirstChild("PickWeapons", true)
+        if selUI and selUI.Visible then
+            local payload = {}
+            for i, key in ipairs({ "Loadout_1", "Loadout_2", "Loadout_3", "Loadout_4" }) do
+                local v = Options[key] and Options[key].Value
+                if v and v ~= "None" then payload[i] = v end
+            end
+            if next(payload) then
+                pcall(function() weaponPickRemote:FireServer(payload) end)
+                pcall(function() prePickRemote:FireServer(payload) end)
+            end
+            repeat task.wait(0.1) until not (selUI and selUI.Visible)
+        end
+    end
+end)
+
+-- ======================== MISC — Spoofer ========================
+local SpooferBox = Tabs.Misc:AddRightGroupbox("Spoofer", "user")
+
+SpooferBox:AddToggle("NameSpoofToggle", {
+    Text    = "Enable Name Spoof",
+    Default = false,
+    Tooltip = "Spoofs displayed names locally",
+})
+
+local NSDep = SpooferBox:AddDependencyBox()
+NSDep:AddInput("SpoofedSelfName",  { Text = "Your Spoofed Name",  Default = "Andy",    Placeholder = "Your name...",  Numeric = false })
+NSDep:AddInput("SpoofedEnemyName", { Text = "Enemy Spoofed Name", Default = "Johnny",  Placeholder = "Enemy name...", Numeric = false })
+NSDep:SetupDependencies({ { Toggles.NameSpoofToggle, true } })
+
+SpooferBox:AddToggle("LevelSpoofToggle", {
+    Text    = "Enable Level Spoof",
+    Default = false,
+    Tooltip = "Spoofs your displayed level",
+})
+
+local LSDep = SpooferBox:AddDependencyBox()
+LSDep:AddSlider("SpoofedLevel", { Text = "Spoofed Level", Default = 996, Min = 1, Max = 9999, Rounding = 0 })
+LSDep:SetupDependencies({ { Toggles.LevelSpoofToggle, true } })
+
+SpooferBox:AddToggle("WinstreakSpoofToggle", { Text = "Enable Winstreak Spoof", Default = false })
+
+local WSDep = SpooferBox:AddDependencyBox()
+WSDep:AddSlider("SpoofedWinstreak", { Text = "Spoofed Winstreak", Default = 56, Min = 0, Max = 9999, Rounding = 0 })
+WSDep:SetupDependencies({ { Toggles.WinstreakSpoofToggle, true } })
+
+local originalNames = {}
+local originalStats = { Level = nil, Winstreak = nil }
+
+local function spoofPlayer(player)
+    if not originalNames[player] then
+        originalNames[player] = { Name = player.Name, DisplayName = player.DisplayName }
+    end
+    if Toggles.NameSpoofToggle and Toggles.NameSpoofToggle.Value then
+        local selfName  = Options.SpoofedSelfName  and Options.SpoofedSelfName.Value  or "Andy"
+        local enemyName = Options.SpoofedEnemyName and Options.SpoofedEnemyName.Value or "Johnny"
+        local name = (player == LocalPlayer) and selfName or enemyName
+        pcall(function() player.Name = name; player.DisplayName = name end)
+    else
+        pcall(function() player.Name = originalNames[player].Name; player.DisplayName = originalNames[player].DisplayName end)
+    end
+end
+
+local function spoofStats()
+    local ls = LocalPlayer:FindFirstChild("CustomLeaderstats")
+    if not ls then return end
+    
+    local lv = ls:FindFirstChild("Level")
+    if lv and lv:IsA("IntValue") and originalStats.Level == nil then originalStats.Level = lv.Value end
+    local ws = ls:FindFirstChild("Win Streak")
+    local sv = ws and (ws:IsA("IntValue") and ws or (ws:IsA("Folder") and ws:FindFirstChildWhichIsA("IntValue")))
+    if sv and originalStats.Winstreak == nil then originalStats.Winstreak = sv.Value end
+
+    if Toggles.LevelSpoofToggle and Toggles.LevelSpoofToggle.Value then
+        if lv and lv:IsA("IntValue") then lv.Value = Options.SpoofedLevel.Value end
+        pcall(function() LocalPlayer:SetAttribute("Level", Options.SpoofedLevel.Value) end)
+    elseif originalStats.Level ~= nil then
+        if lv and lv:IsA("IntValue") then lv.Value = originalStats.Level end
+        pcall(function() LocalPlayer:SetAttribute("Level", originalStats.Level) end)
+    end
+    
+    if Toggles.WinstreakSpoofToggle and Toggles.WinstreakSpoofToggle.Value then
+        if sv then sv.Value = Options.SpoofedWinstreak.Value end
+        pcall(function() LocalPlayer:SetAttribute("StatisticDuelsWinStreak", Options.SpoofedWinstreak.Value) end)
+    elseif originalStats.Winstreak ~= nil then
+        if sv then sv.Value = originalStats.Winstreak end
+        pcall(function() LocalPlayer:SetAttribute("StatisticDuelsWinStreak", originalStats.Winstreak) end)
+    end
+end
+
+Toggles.NameSpoofToggle:OnChanged(function()
+    for _, p in ipairs(Players:GetPlayers()) do pcall(spoofPlayer, p) end
+end)
+Toggles.LevelSpoofToggle:OnChanged(spoofStats)
+Toggles.WinstreakSpoofToggle:OnChanged(spoofStats)
+
+Players.PlayerAdded:Connect(spoofPlayer)
+task.spawn(function()
+    while task.wait(2) do
+        for _, p in ipairs(Players:GetPlayers()) do pcall(spoofPlayer, p) end
+        pcall(spoofStats)
+    end
+end)
+
+-- ======================== SETTINGS ========================
+local MenuGroup = Tabs.Settings:AddLeftGroupbox("Menu", "wrench")
+
+MenuGroup:AddToggle("KeybindMenuOpen", {
+    Default  = Library.KeybindFrame.Visible,
+    Text     = "Open Keybind Menu",
+    Callback = function(value) Library.KeybindFrame.Visible = value end,
+})
+
+MenuGroup:AddToggle("ShowCustomCursor", {
+    Text     = "Custom Cursor",
+    Default  = Library.ShowCustomCursor,
+    Callback = function(Value) Library.ShowCustomCursor = Value end,
+})
+
+MenuGroup:AddDropdown("NotificationSide", {
+    Values   = { "Left", "Right" },
+    Default  = "Right",
+    Text     = "Notification Side",
+    Callback = function(Value) Library:SetNotifySide(Value) end,
+})
+
+MenuGroup:AddDropdown("DPIDropdown", {
+    Values   = { "50%", "75%", "100%", "125%", "150%", "175%", "200%" },
+    Default  = "100%",
+    Text     = "DPI Scale",
+    Callback = function(Value)
+        Value = Value:gsub("%%", "")
+        Library:SetDPIScale(tonumber(Value))
+    end,
+})
+
+MenuGroup:AddSlider("UICornerSlider", {
+    Text     = "Corner Radius",
+    Default  = Library.CornerRadius,
+    Min      = 0,
+    Max      = 20,
+    Rounding = 0,
+    Callback = function(value) Window:SetCornerRadius(value) end,
+})
+
+MenuGroup:AddLabel("Menu bind"):AddKeyPicker("MenuKeybind", {
+    Default = "RightShift",
+    NoUI    = true,
+    Text    = "Menu keybind",
+})
+
+MenuGroup:AddButton({
+    Text = "Unload",
+    Func = function() Library:Unload() end,
+})
+
+Library.ToggleKeybind = Options.MenuKeybind
+
+-- Theme & Save
+ThemeManager:SetLibrary(Library)
+SaveManager:SetLibrary(Library)
+SaveManager:IgnoreThemeSettings()
+SaveManager:SetIgnoreIndexes({ "MenuKeybind" })
+ThemeManager:SetFolder("CryptSec")
+SaveManager:SetFolder("CryptSec/Rivals")
+SaveManager:BuildConfigSection(Tabs.Settings)
+ThemeManager:ApplyToTab(Tabs.Settings)
+SaveManager:LoadAutoloadConfig()
+
+-- ======================== CLEANUP ========================
+Library:OnUnload(function()
+    pcall(function() FovCircle:Remove() end)
+    uninstallSilentAim()
+    restoreRapidFire()
+    stopLocalEmote()
+    unhookEmoteEntity()
+end)
+
+Library:AddDraggableButton("Open/Close", function()
+    Library:Toggle()
+end, false, 94651747085280, "Left")
