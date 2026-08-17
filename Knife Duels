@@ -1,0 +1,652 @@
+local Players    = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local Workspace  = game:GetService("Workspace")
+local HttpService = game:GetService("HttpService")
+local LocalPlayer = Players.LocalPlayer
+local Camera = Workspace.CurrentCamera
+
+-- ======================== LIBRARY ========================
+local repo = "https://raw.githubusercontent.com/deividcomsono/Obsidian/refs/heads/main/"
+local Library     = loadstring(game:HttpGet(repo .. "Library.lua"))()
+local ThemeManager = loadstring(game:HttpGet(repo .. "addons/ThemeManager.lua"))()
+local SaveManager  = loadstring(game:HttpGet(repo .. "addons/SaveManager.lua"))()
+
+local Options = Library.Options
+local Toggles = Library.Toggles
+
+Library.ForceCheckbox = false
+Library.ShowToggleFrameInKeybinds = true
+
+local Window = Library:CreateWindow({
+	Title = "CryptSec",
+	Footer = "Knife Duels",
+	Icon = 121626436575118,
+	NotifySide = "Right",
+	ShowCustomCursor = false
+})
+
+local Tabs = {
+    Combat  = Window:AddTab("Combat",   "swords"),
+    Visuals = Window:AddTab("Visuals",  "eye"),
+    Settings = Window:AddTab("Settings", "settings"),
+}
+
+-- ======================== LAZY SERVICES ========================
+-- pcall + WaitForChild so the UI always loads, even if the game isn't ready
+local _MC, _RH
+
+local function getMatchController()
+    if _MC then return _MC end
+    local ok, r = pcall(function()
+        return require(
+            LocalPlayer.PlayerScripts
+                :WaitForChild("Controllers", 10)
+                :WaitForChild("Match", 10)
+                :WaitForChild("MatchController", 10)
+        )
+    end)
+    if ok then _MC = r end
+    return _MC
+end
+
+local function getReportHit()
+    if _RH then return _RH end
+    local ok, r = pcall(function()
+        return game:GetService("ReplicatedStorage")
+            :WaitForChild("CombatService", 10)
+            :WaitForChild("RE", 10)
+            :WaitForChild("ReportHit", 10)
+    end)
+    if ok then _RH = r end
+    return _RH
+end
+
+-- ======================== SHARED UTILITY ========================
+local utility = { target = nil }
+
+local function isVisible(target)
+    local params = RaycastParams.new()
+    params.FilterType = Enum.RaycastFilterType.Exclude
+    params.FilterDescendantsInstances = { LocalPlayer.Character }
+    params.IgnoreWater = true
+    local origin = Camera.CFrame.Position
+    local result = Workspace:Raycast(origin, target.Position - origin, params)
+    if result then
+        return Players:GetPlayerFromCharacter(result.Instance:FindFirstAncestorOfClass("Model")) ~= nil
+    end
+    return true
+end
+
+local function getClosestEnemy()
+    local cam = Camera
+    local center = cam.ViewportSize / 2
+    local closestDist = math.huge
+    local closestTarget = nil
+    local mc = getMatchController()
+
+    local useFov = Toggles.SilentUseFov and Toggles.SilentUseFov.Value
+    local fovMax = (useFov and Options.SilentFovRadius) and Options.SilentFovRadius.Value or math.huge
+
+    for _, v in pairs(Players:GetPlayers()) do
+        if v == LocalPlayer then continue end
+        local char = v.Character
+        if not char then continue end
+        if char:GetAttribute("Dead") then continue end
+        if char:GetAttribute("Health") and char:GetAttribute("Health") <= 0 then continue end
+
+        local hrp  = char:FindFirstChild("HumanoidRootPart")
+        local head = char:FindFirstChild("Head")
+        if not hrp or not head then continue end
+
+        local isEnemy = mc and mc:IsPlayerEnemy(v)
+        if isEnemy == nil then isEnemy = true end  -- default: everyone is enemy
+        if not isEnemy then continue end
+
+        -- Team check (only applied when SilentTeamCheck is on)
+        if Toggles.SilentTeamCheck and Toggles.SilentTeamCheck.Value then
+            if not (mc and mc:IsPlayerEnemy(v)) then continue end
+        end
+
+        local screenPos, onScreen = cam:WorldToViewportPoint(hrp.Position)
+        if not onScreen then continue end
+
+        local dist = (Vector2.new(screenPos.X, screenPos.Y) - center).Magnitude
+        if dist >= fovMax then continue end
+        if dist >= closestDist then continue end
+
+        -- Wall check (only applied when SilentWallCheck is on)
+        if Toggles.SilentWallCheck and Toggles.SilentWallCheck.Value then
+            if not isVisible(head) then continue end
+        end
+
+        closestDist   = dist
+        closestTarget = head
+    end
+    return closestTarget
+end
+
+-- ======================== FOV CIRCLE (Drawing) ========================
+local FovCircle = Drawing.new("Circle")
+FovCircle.Radius    = 70
+FovCircle.Color     = Color3.fromRGB(255, 255, 255)
+FovCircle.Filled    = false
+FovCircle.NumSides  = 128
+FovCircle.Thickness = 1
+FovCircle.Visible   = false
+
+RunService.RenderStepped:Connect(function()
+    FovCircle.Position = Camera.ViewportSize / 2
+
+    local showFov = Toggles.SilentAimToggle and Toggles.SilentAimToggle.Value
+                 and Toggles.SilentUseFov and Toggles.SilentUseFov.Value
+    FovCircle.Visible = showFov or false
+
+    if Options.SilentFovRadius then FovCircle.Radius = Options.SilentFovRadius.Value end
+    if Options.FovColor        then FovCircle.Color  = Options.FovColor.Value end
+
+    -- Update shared target for all features
+    utility.target = getClosestEnemy()
+end)
+
+-- ======================== COMBAT — Silent Aim ========================
+local SilentAimBox = Tabs.Combat:AddLeftGroupbox("Silent Aim", "swords")
+
+SilentAimBox:AddToggle("SilentAimToggle", {
+    Text    = "Enable Silent Aim",
+    Default = false,
+    Tooltip = "Redirects your knife via os.clock/AttemptThrow hook",
+    Disabled = typeof(hookfunction) ~= "function",
+    DisabledTooltip = "Your executor does not support hookfunction.",
+})
+
+Toggles.SilentAimToggle:AddKeyPicker("SilentAimKey", {
+    Text    = "Toggle Key",
+    Default = "None",
+    Mode    = "Toggle",
+})
+
+local SilentDepBox = SilentAimBox:AddDependencyBox()
+
+SilentDepBox:AddToggle("SilentTeamCheck", {
+    Text    = "Team Check",
+    Default = true,
+    Tooltip = "Skip teammates",
+})
+
+SilentDepBox:AddToggle("SilentWallCheck", {
+    Text    = "Wall Check",
+    Default = true,
+    Tooltip = "Skip targets behind walls",
+})
+
+SilentDepBox:AddToggle("SilentUseFov", {
+    Text    = "Use FOV Limit",
+    Default = false,
+    Tooltip = "Only target within FOV radius",
+})
+
+SilentDepBox:AddSlider("SilentFovRadius", {
+    Text     = "FOV Radius",
+    Default  = 70,
+    Min      = 10,
+    Max      = 800,
+    Rounding = 0,
+})
+
+SilentDepBox:SetupDependencies({ { Toggles.SilentAimToggle, true } })
+
+-- os.clock / AttemptThrow hook (from src.lua)
+local oldOsClock = nil
+local hOk, hErr = pcall(function()
+    oldOsClock = hookfunction(os.clock, function(...)
+        if debug.info(debug.info(3, "f"), "n") == "AttemptThrow" then
+            if Toggles.SilentAimToggle.Value and utility.target then
+                local oldcf = Camera.CFrame
+                Camera.CFrame = CFrame.lookAt(Camera.CFrame.Position, utility.target.Position)
+                local result = oldOsClock(...)
+                task.defer(function()
+                    RunService.RenderStepped:Wait()
+                    Camera.CFrame = oldcf
+                end)
+                return result
+            end
+        end
+        return oldOsClock(...)
+    end)
+end)
+if not hOk then warn("[SilentAim] " .. tostring(hErr)) end
+
+-- ======================== COMBAT — Triggerbot ========================
+local TriggerbotBox = Tabs.Combat:AddRightGroupbox("Triggerbot", "crosshair")
+
+TriggerbotBox:AddToggle("TriggerbotToggle", {
+    Text    = "Enable Triggerbot",
+    Default = false,
+    Tooltip = "Auto clicks when an enemy is in FOV",
+})
+
+Toggles.TriggerbotToggle:AddKeyPicker("TriggerbotKey", {
+    Text    = "Toggle Key",
+    Default = "None",
+    Mode    = "Toggle",
+})
+
+local TrigDepBox = TriggerbotBox:AddDependencyBox()
+
+TrigDepBox:AddDropdown("TriggerbotMouse", {
+    Values  = { "Mouse1", "Mouse2" },
+    Default = "Mouse1",
+    Text    = "Click Button",
+})
+
+TrigDepBox:AddSlider("TriggerbotDelay", {
+    Text     = "Delay (s)",
+    Default  = 0.08,
+    Min      = 0,
+    Max      = 1,
+    Rounding = 3,
+})
+
+TrigDepBox:SetupDependencies({ { Toggles.TriggerbotToggle, true } })
+
+local lastTriggerTime = 0
+RunService.RenderStepped:Connect(function()
+    if not Toggles.TriggerbotToggle.Value then return end
+    local now   = tick()
+    local delay = Options.TriggerbotDelay and Options.TriggerbotDelay.Value or 0.08
+    if now - lastTriggerTime < delay then return end
+    if utility.target then
+        if Options.TriggerbotMouse.Value == "Mouse1" then mouse1click() else mouse2click() end
+        lastTriggerTime = now
+    end
+end)
+
+-- ======================== COMBAT — Anti-Cheat Bypass ========================
+local AntiCheatBox = Tabs.Combat:AddLeftGroupbox("Anti-Cheat Bypass", "shield")
+
+AntiCheatBox:AddToggle("AntiCheatBypassToggle", {
+    Text    = "Enable Anti-Cheat Bypass",
+    Default = true,
+    Tooltip = "Neutralises the anti-cheat's internal table watchers via setmetatable",
+})
+
+AntiCheatBox:AddButton({
+    Text = "Run Bypass Now",
+    Func = function()
+        if not getgc then return end
+        local functions = getgc(true)
+        for i = 1, #functions do
+            local obj = functions[i]
+            if type(obj) == "function" then
+                local info = debug.getinfo(obj)
+                if info and info.name == "f" then
+                    local upvalues = getupvalues(obj)
+                    for j = 1, #upvalues do
+                        local upval = upvalues[j]
+                        if type(upval) == "table" then
+                            setmetatable(upval, { __newindex = function() end })
+                        end
+                    end
+                end
+            end
+        end
+    end,
+})
+
+-- Background loop: re-apply bypass every ~5 seconds while toggle is on
+local lastBypassTime = 0
+RunService.Heartbeat:Connect(function()
+    if not Toggles.AntiCheatBypassToggle.Value then return end
+    if not getgc then return end
+    local now = tick()
+    if now - lastBypassTime < 5 then return end
+    lastBypassTime = now
+    local functions = getgc(true)
+    for i = 1, #functions do
+        local obj = functions[i]
+        if type(obj) == "function" then
+            local info = debug.getinfo(obj)
+            if info and info.name == "f" then
+                local upvalues = getupvalues(obj)
+                for j = 1, #upvalues do
+                    local upval = upvalues[j]
+                    if type(upval) == "table" then
+                        setmetatable(upval, { __newindex = function() end })
+                    end
+                end
+            end
+        end
+    end
+end)
+
+-- ======================== COMBAT — Kill Aura ========================
+local KillAuraBox = Tabs.Combat:AddRightGroupbox("Kill Aura", "zap")
+
+KillAuraBox:AddToggle("KillAuraToggle", {
+    Text    = "Enable Kill Aura",
+    Default = false,
+    Tooltip = "Fires ReportHit to all nearby enemies",
+})
+
+Toggles.KillAuraToggle:AddKeyPicker("KillAuraKey", {
+    Text    = "Toggle Key",
+    Default = "None",
+    Mode    = "Toggle",
+})
+
+KillAuraBox:AddDependencyBox():SetupDependencies({ { Toggles.KillAuraToggle, true } })
+
+-- Shared helper — fires ReportHit on all living enemies regardless of Kill Aura toggle state
+local function fireKillAura()
+    local mc = getMatchController()
+    local rh = getReportHit()
+    if not mc or not rh then return end
+    for _, plr in next, Players:GetPlayers() do
+        if plr == LocalPlayer then continue end
+        local char = plr.Character
+        if not char then continue end
+        local hrp = char:FindFirstChild("HumanoidRootPart")
+        if not hrp then continue end
+        if char:GetAttribute("Dead") then continue end
+        if char:GetAttribute("Health") and char:GetAttribute("Health") <= 0 then continue end
+        if not mc:IsPlayerEnemy(plr) then continue end
+        pcall(function()
+            rh:FireServer(char, "Knife", true, nil,
+                HttpService:GenerateGUID(false), hrp.Position, 3)
+        end)
+    end
+end
+
+RunService.Heartbeat:Connect(function()
+    if not Toggles.KillAuraToggle.Value then return end
+    fireKillAura()
+end)
+
+-- ======================== COMBAT — Rage Bot ========================
+local RageBotBox = Tabs.Combat:AddRightGroupbox("Rage Bot", "zap")
+
+RageBotBox:AddToggle("RageBotToggle", {
+    Text    = "Enable Rage Bot",
+    Default = false,
+    Tooltip = "Teleports you behind the nearest enemy and keeps you locked there",
+})
+
+Toggles.RageBotToggle:AddKeyPicker("RageBotKey", {
+    Text    = "Toggle Key",
+    Default = "None",
+    Mode    = "Toggle",
+})
+
+-- Rage Bot state
+local rageBotEnemyList  = {}
+local rageBotIndex      = 1
+local rageBotSwitchTime = 0
+local RAGEBOT_INTERVAL  = 0.1  -- Seconds between enemy switch
+
+RunService.RenderStepped:Connect(function()
+    if not Toggles.RageBotToggle.Value then return end
+    local mc     = getMatchController()
+    local myChar = LocalPlayer.Character
+    local myHRP  = myChar and myChar:FindFirstChild("HumanoidRootPart")
+    if not myHRP then return end
+
+    -- Rebuild the living-enemy list every frame
+    rageBotEnemyList = {}
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr == LocalPlayer then continue end
+        local char = plr.Character
+        if not char then continue end
+        if char:GetAttribute("Dead") then continue end
+        if char:GetAttribute("Health") and char:GetAttribute("Health") <= 0 then continue end
+        local hrp = char:FindFirstChild("HumanoidRootPart")
+        if not hrp then continue end
+        local isEnemy = mc and mc:IsPlayerEnemy(plr)
+        if isEnemy == nil then isEnemy = true end
+        if not isEnemy then continue end
+        table.insert(rageBotEnemyList, hrp)
+    end
+
+    if #rageBotEnemyList == 0 then return end
+
+    -- Clamp index in case enemies died/left
+    if rageBotIndex > #rageBotEnemyList then
+        rageBotIndex = 1
+    end
+
+    -- Cycle to the next enemy after the interval expires
+    local now = tick()
+    if now - rageBotSwitchTime >= RAGEBOT_INTERVAL then
+        rageBotSwitchTime = now
+        rageBotIndex = (rageBotIndex % #rageBotEnemyList) + 1
+    end
+
+    local targetHRP = rageBotEnemyList[rageBotIndex]
+    if not targetHRP then return end
+
+    -- Teleport to 2 studs directly behind the current target
+    myHRP.CFrame = targetHRP.CFrame * CFrame.new(0, 0, 2)
+
+    -- Fire Kill Aura on ALL enemies every frame (independent of Kill Aura toggle)
+    fireKillAura()
+end)
+
+-- ======================== COMBAT — Hitbox Expander ========================
+local HitboxBox = Tabs.Combat:AddRightGroupbox("Hitbox Expander", "maximize")
+
+HitboxBox:AddToggle("HitboxToggle", {
+    Text    = "Enable Hitbox Expander",
+    Default = false,
+    Tooltip = "Enlarges enemy hitboxes",
+})
+
+Toggles.HitboxToggle:AddKeyPicker("HitboxKey", {
+    Text    = "Toggle Key",
+    Default = "None",
+    Mode    = "Toggle",
+})
+
+local HBDepBox = HitboxBox:AddDependencyBox()
+
+HBDepBox:AddSlider("HitboxSize", {
+    Text     = "Hitbox Size",
+    Default  = 30,
+    Min      = 1,
+    Max      = 60,
+    Rounding = 0,
+})
+
+HBDepBox:AddSlider("HitboxTransparency", {
+    Text     = "Transparency",
+    Default  = 0.6,
+    Min      = 0,
+    Max      = 1,
+    Rounding = 2,
+})
+
+HBDepBox:AddDropdown("HitboxPart", {
+    Text    = "Target Part",
+    Values  = { "Head", "HumanoidRootPart", "Torso" },
+    Default = "Head",
+})
+
+HBDepBox:SetupDependencies({ { Toggles.HitboxToggle, true } })
+
+RunService.RenderStepped:Connect(function()
+    if not Toggles.HitboxToggle.Value then return end
+    local size  = Options.HitboxSize.Value
+    local trans = Options.HitboxTransparency.Value
+    local part  = Options.HitboxPart.Value
+    for _, player in Players:GetPlayers() do
+        if player == LocalPlayer then continue end
+        local char = player.Character
+        if not char then continue end
+        local humanoid = char:FindFirstChild("Humanoid")
+        local tgtPart  = char:FindFirstChild(part)
+        if humanoid and humanoid.Health > 0 and tgtPart then
+            if not tgtPart:FindFirstChild("OriginalSize") then
+                local ogv = Instance.new("Vector3Value")
+                ogv.Name = "OriginalSize"; ogv.Value = tgtPart.Size; ogv.Parent = tgtPart
+            end
+            tgtPart.Size         = Vector3.new(size, size, size)
+            tgtPart.Transparency = trans
+            tgtPart.CanCollide   = false
+            tgtPart.Massless     = true
+        end
+    end
+end)
+
+-- ======================== VISUALS — ESP ========================
+local VisualsESPBox = Tabs.Visuals:AddLeftGroupbox("ESP", "eye")
+
+local espHighlights = {}
+
+VisualsESPBox:AddToggle("ESPToggle", {
+    Text    = "Enable ESP",
+    Default = false,
+    Tooltip = "Highlights players with Highlight instances",
+}):AddColorPicker("ESPEnemyColor", {
+    Default = Color3.fromRGB(255, 60, 60),
+    Title   = "Enemy Color",
+})
+
+VisualsESPBox:AddLabel("Teammate Color"):AddColorPicker("ESPTeamColor", {
+    Default = Color3.fromRGB(60, 220, 60),
+    Title   = "Teammate Color",
+})
+
+VisualsESPBox:AddSlider("ESPFillTransparency", {
+    Text     = "Fill Transparency",
+    Default  = 0.5,
+    Min      = 0,
+    Max      = 1,
+    Rounding = 2,
+})
+
+local function updateESP()
+    local mc = getMatchController()
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer and player.Character then
+            if Toggles.ESPToggle.Value then
+                local hl = espHighlights[player]
+                if not hl then
+                    hl = Instance.new("Highlight")
+                    hl.OutlineTransparency = 0
+                    espHighlights[player] = hl
+                end
+                hl.Parent           = player.Character
+                hl.FillTransparency = Options.ESPFillTransparency.Value
+                local isEnemy = mc and mc:IsPlayerEnemy(player) or false
+                local col = isEnemy and Options.ESPEnemyColor.Value or Options.ESPTeamColor.Value
+                hl.FillColor    = col
+                hl.OutlineColor = col
+            else
+                if espHighlights[player] then
+                    espHighlights[player]:Destroy()
+                    espHighlights[player] = nil
+                end
+            end
+        end
+    end
+end
+
+Players.PlayerRemoving:Connect(function(player)
+    if espHighlights[player] then
+        espHighlights[player]:Destroy()
+        espHighlights[player] = nil
+    end
+end)
+
+RunService.Heartbeat:Connect(function() pcall(updateESP) end)
+
+-- ======================== VISUALS — FOV Circle ========================
+local VisualsConfigBox = Tabs.Visuals:AddRightGroupbox("FOV Circle", "circle")
+
+VisualsConfigBox:AddLabel("FOV Color"):AddColorPicker("FovColor", {
+    Default = Color3.fromRGB(255, 255, 255),
+    Title   = "FOV Color",
+})
+
+VisualsConfigBox:AddLabel("Enable via Combat -> Silent Aim -> Use FOV Limit")
+
+-- ======================== SETTINGS ========================
+local MenuGroup = Tabs.Settings:AddLeftGroupbox("Menu", "wrench")
+
+MenuGroup:AddToggle("KeybindMenuOpen", {
+    Default  = Library.KeybindFrame.Visible,
+    Text     = "Open Keybind Menu",
+    Callback = function(value) Library.KeybindFrame.Visible = value end,
+})
+
+MenuGroup:AddToggle("ShowCustomCursor", {
+    Text     = "Custom Cursor",
+    Default  = Library.ShowCustomCursor,
+    Callback = function(Value) Library.ShowCustomCursor = Value end,
+})
+
+MenuGroup:AddDropdown("NotificationSide", {
+    Values   = { "Left", "Right" },
+    Default  = "Right",
+    Text     = "Notification Side",
+    Callback = function(Value) Library:SetNotifySide(Value) end,
+})
+
+MenuGroup:AddDropdown("DPIDropdown", {
+    Values   = { "50%", "75%", "100%", "125%", "150%", "175%", "200%" },
+    Default  = "100%",
+    Text     = "DPI Scale",
+    Callback = function(Value)
+        Value = Value:gsub("%%", "")
+        Library:SetDPIScale(tonumber(Value))
+    end,
+})
+
+MenuGroup:AddSlider("UICornerSlider", {
+    Text     = "Corner Radius",
+    Default  = Library.CornerRadius,
+    Min      = 0,
+    Max      = 20,
+    Rounding = 0,
+    Callback = function(value) Window:SetCornerRadius(value) end,
+})
+
+MenuGroup:AddLabel("Menu bind"):AddKeyPicker("MenuKeybind", {
+    Default = "RightShift",
+    NoUI    = true,
+    Text    = "Menu keybind",
+})
+
+MenuGroup:AddButton({
+    Text = "Unload",
+    Func = function() Library:Unload() end,
+})
+
+Library.ToggleKeybind = Options.MenuKeybind
+
+-- Theme & Save
+ThemeManager:SetLibrary(Library)
+SaveManager:SetLibrary(Library)
+SaveManager:IgnoreThemeSettings()
+SaveManager:SetIgnoreIndexes({ "MenuKeybind" })
+ThemeManager:SetFolder("FishyxAbyss")
+SaveManager:SetFolder("FishyxAbyss/KnifeDuels")
+SaveManager:BuildConfigSection(Tabs.Settings)
+ThemeManager:ApplyToTab(Tabs.Settings)
+SaveManager:LoadAutoloadConfig()
+
+Library:AddDraggableButton("Open/Close", function()
+    Library:Toggle()
+end, false, 94651747085280, "Left")
+
+-- ======================== CLEANUP ========================
+Library:OnUnload(function()
+    pcall(function() FovCircle:Remove() end)
+
+    if oldOsClock then
+        pcall(function() hookfunction(os.clock, oldOsClock) end)
+    end
+
+    for _, hl in pairs(espHighlights) do
+        pcall(function() hl:Destroy() end)
+    end
+    espHighlights = {}
+end)
